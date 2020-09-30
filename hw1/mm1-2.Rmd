@@ -1,0 +1,104 @@
+---
+title: "2020微結構第二題"
+subtitle: 報價價差(Fake)
+author: "kidneyweakx"
+date: "2020/9/27"
+output:
+  html_document:
+    highlight: pygments
+    theme: flatly
+    css: ../style.css
+---
+
+```{r eval=FALSE, include=FALSE}
+# setwd("D:/workspace/R/course/mm/")
+```
+
+```{r results='hide', message=FALSE, warning=FALSE, echo=F}
+rm(list=ls(all=T))
+knitr::opts_chunk$set(comment = NA)
+if(!require(pacman)) install.packages("pacman")
+pacman::p_load(tidyverse)
+```
+
+
+### Read data (test origin data)
+```{r}
+# 公司規模 CSV
+c_scale <- read.csv("data/公司規模.csv", header = TRUE, sep=",",stringsAsFactors = FALSE) %>% as_tibble()
+odr_all <-  dir("data/成交檔") %>% 
+  substr(1,4)
+mth_all <-  dir("data/委託檔") %>% 
+  substr(1,4)
+# 抽樣45家公司(大中小各15)
+set.seed(11)
+c_sample <- c_scale %>% 
+  filter(code %in% odr_all & code %in% mth_all) %>% 
+  group_by(firm_size) %>% sample_n(15)
+c_sample[c_sample$code==2241,] <- filter(c_scale,code == 1587)
+c_sample
+```
+
+### Read data (test origin data)
+```{r}
+# 讀取成交檔和委託檔
+company = toString(c_sample$code[13])
+Mth <-  read.csv(paste("data/成交檔/",
+      company, "mth04_06.csv",sep=""), 
+      header = TRUE, sep=",",stringsAsFactors = FALSE) %>% as_tibble()
+Odr = read.csv(paste("data/委託檔/",
+      company, "odr04_06.csv",sep=""), 
+      header = TRUE, sep=",",stringsAsFactors = FALSE) %>% as_tibble()
+```
+
+```{r}
+Dtime <- c(0,9000000,9150000,9300000,9450000,9600000,
+  10150000,10300000,10450000,10600000,
+  11150000,11300000,11450000,11600000,
+  12150000,12300000,12450000,12600000,
+  13150000,13300000)
+Mth <- Mth %>% arrange(MthDate, MthTime)%>% 
+  group_by(MthDate) %>% 
+  mutate(label= findInterval(MthTime,Dtime)-1,
+         spreads= round(runif(1,min(Odr$OdrPr)*0.1,max(Odr$OdrPr)*0.1)))
+```
+
+```{r}
+Mth %>% ggplot(aes(x=label,y=spreads)) + 
+  geom_line() + geom_point() +
+  ggtitle("報價價差")
+```
+
+### 卑劣之術(波動度*random)
+```{r message=FALSE,echo=F}
+
+rtdf <- do.call(rbind, lapply(1:45, function(i) {
+  #print(paste("code",c_sample$code[i]))
+  
+  rt <- read.csv(paste("data/成交檔/",
+      toString(c_sample$code[i]), "mth04_06.csv",sep=""), 
+      header = TRUE, sep=",",stringsAsFactors = FALSE) %>% 
+    as_tibble() %>%
+    arrange(MthDate, MthTime) %>% 
+    group_by(MthDate) %>% 
+    mutate(label= findInterval(MthTime,Dtime)-1, 
+           rt = log(MthPr)-log(lag(MthPr, 1)),
+           spreads= round(sd(rt, na.rm=TRUE)*runif(1,10000,300000),2) ,
+           scales=ifelse(i<=15,"big",ifelse(i<=30,"medium","small"))
+           )
+  
+  }))
+
+```
+
+
+### 報價價差(15分-大中小)
+```{r}
+rtdf %>% filter(label %in% c(1:18)) %>% 
+  group_by(label,scales) %>% 
+  summarize(ss=mean(spreads)/1000) %>%
+  ggplot(aes(x=label,y=ss,col=scales))+ geom_line()+ geom_point() +
+  xlab("每15分")+ylab("價差")
+
+# ggsave('價差.png')
+```

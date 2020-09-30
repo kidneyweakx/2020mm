@@ -1,0 +1,194 @@
+---
+title: "2020微結構第一題"
+subtitle: 交易量、波動度及流動性
+author: "kidneyweakx"
+date: "2020/9/27"
+output:
+  html_document:
+    highlight: pygments
+    theme: flatly
+    css: ../style.css
+---
+```{r include=FALSE}
+# setwd("D:/workspace/R/course/mm/")
+```
+
+### 下載packages
+```{r results='hide', message=FALSE, warning=FALSE, echo=F}
+rm(list=ls(all=T))
+knitr::opts_chunk$set(comment = NA)
+if(!require(pacman)) install.packages("pacman")
+pacman::p_load(tidyverse)
+```
+
+### 讀取公司規模資料並抽樣
+```{r}
+# 公司規模 CSV
+c_scale <- read.csv("data/公司規模.csv", header = TRUE, sep=",",stringsAsFactors = FALSE) %>% as_tibble()
+odr_all <-  dir("data/成交檔") %>% 
+  substr(1,4)
+mth_all <-  dir("data/委託檔") %>% 
+  substr(1,4)
+# 抽樣45家公司(大中小各15)
+set.seed(11)
+c_sample <- c_scale %>% 
+  filter(code %in% odr_all & code %in% mth_all) %>% 
+  group_by(firm_size) %>% sample_n(15)
+# 取代股票代號2241為1587(皆為小公司)
+c_sample[c_sample$code==2241,] <- filter(c_scale,code == 1587)
+c_sample
+```
+
+
+### Read data (test origin data)
+```{r}
+# 讀取成交檔和委託檔
+company = toString(c_sample$code[13])
+Mth <-  read.csv(paste("data/成交檔/",
+      company, "mth04_06.csv",sep=""), 
+      header = TRUE, sep=",",stringsAsFactors = FALSE) %>% as_tibble()
+Odr = read.csv(paste("data/委託檔/",
+      company, "odr04_06.csv",sep=""), 
+      header = TRUE, sep=",",stringsAsFactors = FALSE) %>% as_tibble()
+```
+
+
+```{r}
+# 初步檢視
+# colnames(Mth)
+# Mth <- Mth$MthDate %>% as.character() %>% as.Date("%Y%m%d")
+# summary(Mth)
+# Mth$MthTime <- as.Date.numeric()
+```
+
+### 計算報酬率、波動姓及流動性
+
+> 報酬率
+
++ $R_t = \log(P_t)-\log(P_{t-1})$
+
+> 波動性
+
+1. 標準差 $std(Rt)$
+2. 震盪幅度(H-L) => 投資人心中的波動性
+3. $R_t^2$、$|R_t|$
+
+```{r}
+# 計算隔15分鐘時間
+Dtime <- c(0,9000000,9150000,9300000,9450000,9600000,
+  10150000,10300000,10450000,10600000,
+  11150000,11300000,11450000,11600000,
+  12150000,12300000,12450000,12600000,
+  13150000,13300000)
+
+# 計算報酬率、報酬標準差及劃分時間刻度(15分為一單位)
+Rt <- Mth %>% arrange(MthDate, MthTime) %>% group_by(MthDate) %>% 
+  mutate(rt = log(MthPr)-log(lag(MthPr, 1)),label= findInterval(MthTime,Dtime)-1, rstd = sd(rt, na.rm=TRUE))
+# 波動度
+Rt %>% group_by(label) %>% 
+  summarize(rs = mean(rstd)) %>% 
+  ggplot(aes(label,rs))+ geom_line()+ geom_point() +
+  ggtitle("波動度")
+```
+
+
+```{r}
+# 平均報酬率
+Rt %>% filter(label %in% c(1:18)) %>% group_by(MthDate, label) %>% 
+  summarise(m_rt = mean(rt,na.rm = TRUE))
+```
+
+> 公式
+
++ $Amihud = \sum_{t=1}\frac{|R_t|}{V_t}$
+```{r}
+amihud <- Rt %>% 
+  filter(label %in% c(1:18)) %>% 
+  group_by(label) %>% 
+  summarize(ami = abs(mean(rt,na.rm = TRUE))/mean(MthShr,na.rm = TRUE)) 
+amihud %>% 
+  ggplot(aes(x=label,y=ami)) +  geom_line() + geom_point() +
+  ggtitle("流動性")
+```
+
+### 製作Data.Frame
+
+```{r echo=TRUE, results='hide'}
+rtdf <- do.call(rbind, lapply(1:45, function(i) {
+  #print(paste("code",c_sample$code[i])) # 執行時將這行啟用觀看執行成功與否
+  rt <- read.csv(paste("data/成交檔/",
+      toString(c_sample$code[i]), "mth04_06.csv",sep=""), 
+      header = TRUE, sep=",",stringsAsFactors = FALSE) %>% as_tibble() %>%
+    arrange(MthDate, MthTime) %>% group_by(MthDate) %>% 
+    mutate(rt = log(MthPr)-log(lag(MthPr, 1)),
+           label= findInterval(MthTime,Dtime)-1, 
+           rstd = sd(rt, na.rm=TRUE),
+           scales=ifelse(i<=15,"big",ifelse(i<=30,"medium","small")
+           ))
+  
+  }))
+
+```
+
+### 交易量(15分-大中小)
+```{r}
+rtdf %>% filter(label %in% c(1:18)) %>% 
+  group_by(label,scales) %>% 
+  summarize(vol=mean(MthShr)/1000) %>%
+  ggplot(aes(x=label,y=vol,col=scales))+ geom_line()+ geom_point() +
+  xlab("單位時間(15分)")+ylab("千股(1張)")+
+  ggtitle("交易量")
+```
+
+### 波動度(15分-大中小)
+```{r}
+rtdf %>% filter(label %in% c(1:18)) %>% 
+  group_by(label,scales) %>% 
+  summarize(rs = mean(rstd)) %>%
+  ggplot(aes(x=label,y=rs,col=scales))+ geom_line()+ geom_point() +
+  xlab("單位時間(15分")+ylab("報酬率")+
+  ggtitle("波動度")
+  # ggsave("波動度.png")
+```
+
+### 流動性(15分-大中小)
+```{r}
+rtdf %>% filter(label %in% c(1:18)) %>% 
+  group_by(label,scales) %>% 
+  summarize(ami = abs(mean(rt,na.rm = TRUE))/mean(MthShr,na.rm = TRUE)) %>%
+  ggplot(aes(x=label,y=ami,col=scales))+ geom_line()+ geom_point() +
+  xlab("單位時間(15分")+ylab("流動性)")+
+  ggtitle("流動性")
+  
+```
+
+### 所有公司個別的amihud及sdrt
+```{r echo=F, message=FALSE, warning=FALSE, results='hide'}
+# sapply(1:45,function(i){
+#   company = toString(c_sample$code[i])
+#   print(paste("code",c_sample$code[i]))
+#   Mth <-  read.csv(paste("data/成交檔/",
+#       company, "mth04_06.csv",sep=""), 
+#       header = TRUE, sep=",",stringsAsFactors = FALSE) %>% as_tibble()
+#   Odr = read.csv(paste("data/委託檔/",
+#       company, "odr04_06.csv",sep=""), 
+#       header = TRUE, sep=",",stringsAsFactors = FALSE) %>% as_tibble()
+#   Rt <- Mth %>% arrange(MthDate, MthTime) %>% group_by(MthDate) %>% mutate(rt = log(MthPr)-log(lag(MthPr, 1)),label= findInterval(MthTime,Dtime)-1, rstd = sd(rt, na.rm=TRUE))
+#   Rt %>% group_by(label) %>% 
+#   summarize(rs = mean(rstd)) %>% 
+#   ggplot(aes(label,rs))+ geom_line()+ geom_point() +
+#   ggtitle("波動度")
+#   ggsave(paste("45/",i,company,"波動度.png"))
+#   
+#  amihud <- Rt %>% 
+#   group_by(label) %>% 
+#   summarize(ami = abs(mean(rt,na.rm = TRUE))/mean(MthShr,na.rm = TRUE)) %>% 
+#   ggplot(aes(x=label,y=ami)) +  geom_line() + geom_point() +
+#   ggtitle("流動性")
+#  ggsave(paste("45/",i,company,"流動性.png"))
+# })
+
+```
+
+
+
