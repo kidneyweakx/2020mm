@@ -25,10 +25,10 @@ pacman::p_load(tidyverse)
 ### Read data (test origin data)
 ```{r}
 # 公司規模 CSV
-c_scale <- read.csv("data/公司規模.csv", header = TRUE, sep=",",stringsAsFactors = FALSE) %>% as_tibble()
-odr_all <-  dir("data/成交檔") %>% 
+c_scale <- read.csv("../data/公司規模.csv", header = TRUE, sep=",",stringsAsFactors = FALSE) %>% as_tibble()
+odr_all <-  dir("../data/成交檔") %>% 
   substr(1,4)
-mth_all <-  dir("data/委託檔") %>% 
+mth_all <-  dir("../data/委託檔") %>% 
   substr(1,4)
 # 抽樣45家公司(大中小各15)
 set.seed(11)
@@ -43,10 +43,10 @@ c_sample
 ```{r}
 # 讀取成交檔和委託檔
 company = toString(c_sample$code[13])
-Mth <-  read.csv(paste("data/成交檔/",
+Mth <-  read.csv(paste("../data/成交檔/",
       company, "mth04_06.csv",sep=""), 
       header = TRUE, sep=",",stringsAsFactors = FALSE) %>% as_tibble()
-Odr = read.csv(paste("data/委託檔/",
+Odr = read.csv(paste("../data/委託檔/",
       company, "odr04_06.csv",sep=""), 
       header = TRUE, sep=",",stringsAsFactors = FALSE) %>% as_tibble()
 ```
@@ -75,7 +75,7 @@ Mth %>% ggplot(aes(x=label,y=spreads)) +
 rtdf <- do.call(rbind, lapply(1:45, function(i) {
   #print(paste("code",c_sample$code[i]))
   
-  rt <- read.csv(paste("data/成交檔/",
+  rt <- read.csv(paste("../data/成交檔/",
       toString(c_sample$code[i]), "mth04_06.csv",sep=""), 
       header = TRUE, sep=",",stringsAsFactors = FALSE) %>% 
     as_tibble() %>%
