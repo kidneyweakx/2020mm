@@ -1,0 +1,293 @@
+---
+title: "2020微結構HW2"
+author: "kidneyweakx"
+date: "`r Sys.time()`"
+output:
+  html_document:
+#    css: ../style.css
+    highlight: pygments
+    theme: flatly
+  word_document: default
+subtitle: 迴歸分析
+---
+
+### 下載packages
+```{r results='hide', message=FALSE, warning=FALSE, echo=F}
+rm(list=ls(all=T))
+knitr::opts_chunk$set(comment = NA)
+if(!require(pacman)) install.packages("pacman")
+pacman::p_load(tidyverse,lubridate)
+```
+
+### 讀取公司規模資料並抽樣
+```{r}
+# 公司規模 CSV
+c_scale <- read.csv("../data/公司規模.csv", header = TRUE, sep=",",stringsAsFactors = FALSE) %>% as_tibble()
+odr_all <-  dir("../data/成交檔") %>% 
+  substr(1,4)
+mth_all <-  dir("../data/委託檔") %>% 
+  substr(1,4)
+
+# 抽樣50家公司(大中小各15)
+set.seed(111)
+c_sample <- c_scale %>% 
+  filter(code %in% odr_all & code %in% mth_all) %>% 
+  sample_n(50)
+c_sample
+```
+### Read data (test origin data)
+```{r}
+# 讀取成交檔和委託檔
+company = toString(c_sample$code[13])
+Mth <-  read.csv(paste("../data/成交檔/",
+      company, "mth04_06.csv",sep=""), 
+      header = TRUE, sep=",",stringsAsFactors = FALSE) %>% as_tibble()
+```
+
+```{r}
+Dtime <- c(0,9000000,9150000,9300000,9450000,9600000,
+  10150000,10300000,10450000,10600000,
+  11150000,11300000,11450000,11600000,
+  12150000,12300000,12450000,12600000,
+  13150000,13300000)
+Rt <- Mth %>% arrange(MthDate, MthTime) %>% 
+  group_by(MthDate) %>% 
+  mutate(label= findInterval(MthTime,Dtime)-1,
+         sumVol = sum(MthShr)) %>% 
+  group_by(MthDate,BuySell) %>%
+  mutate(isBuy = ifelse(BuySell == "B",1,0),
+                                      isI = ifelse(InvestType == "I",1,0)) %>%
+  ungroup()
+```
+
+### 看一間公司
+```{r}
+x<- Rt %>%
+  group_by(MthDate) %>% 
+  summarise(nBuy = sum(isBuy),nI = sum(isI),
+            meanPr = mean(MthPr),
+            sumVol = sum(MthShr))
+Rt12 <- Rt %>% filter(label == 1|label == 2) %>% 
+  group_by(MthDate) %>%
+  summarise(nBuy12 = sum(isBuy),
+            nI12= sum(isI),
+            meanPr12 = mean(MthPr),sumVol12 = sum(MthShr))
+x <- left_join(x, Rt12)
+# 迴歸模型
+mdl <- lm (x$sumVol~ lag(x$sumVol,1)+
+             x$nBuy + x$nI +
+             x$meanPr + x$sumVol12 +
+             x$nBuy12 + x$nI12 + x$meanPr12)
+summary(mdl)
+
+pred= predict(mdl,x)
+x_pred <- cbind(x,pred)
+x_pred$MthDate <- x_pred$MthDate %>% ymd()
+
+p = ggplot() + 
+  geom_line(data = x_pred, aes(x = MthDate, y = sumVol), col = "blue") +
+  geom_line(data = x_pred, aes(x = MthDate, y = pred), col = "red") 
+print(p)
+```
+### do.call peko
+```{r message=FALSE, include=FALSE}
+
+rtdf <- do.call(rbind, lapply(1:50, function(i) {
+  #print(paste("code",c_sample$code[i]))
+  
+  rt <- read.csv(paste("../data/成交檔/",
+      toString(c_sample$code[i]), "mth04_06.csv",sep=""), 
+      header = TRUE, sep=",",stringsAsFactors = FALSE) %>% 
+    as_tibble() %>%
+    arrange(MthDate, MthTime) %>% 
+    group_by(MthDate) %>% 
+    mutate(label= findInterval(MthTime,Dtime)-1,
+           sumVol = sum(MthShr)) %>% 
+    group_by(MthDate,BuySell) %>%
+    mutate(isBuy = ifelse(BuySell == "B",1,0),
+           isI = ifelse(InvestType == "I",1,0),
+           isBuy12 = ifelse(label==1|label==2,isBuy,0),
+           isI12 = ifelse(label==1|label==2,isI,0),
+           MthPr12 = ifelse(label==1|label==2,MthPr,0),
+           MthShr12 = ifelse(label==1|label==2,MthShr,0)) %>%
+    ungroup() %>%
+    group_by(MthDate) %>% 
+    summarise(sc=c_sample$firm_size[i],
+              nBuy = sum(isBuy),
+              nI = sum(isI),
+              meanPr = mean(MthPr,na.rm=1),
+              sumVol = sum(MthShr),
+              nBuy12 = sum(isBuy12),
+              nI12= sum(isI12),
+              meanPr12 = mean(MthPr12,na.rm=1),
+              sumVol12 = sum(MthShr12))
+  }))
+
+```
+
+### 做LM  konpeko
+```{r}
+# 迴歸 50家公司
+mdl <- lm (rtdf$sumVol~ lag(rtdf$sumVol,1)+
+             rtdf$nBuy + rtdf$nI +
+             rtdf$meanPr + rtdf$sumVol12 +
+             rtdf$nBuy12 + rtdf$nI12 + rtdf$meanPr12)
+summary(mdl)
+pred= predict(mdl,rtdf)
+x_pred <- cbind(rtdf,pred)
+x_pred$MthDate <- x_pred$MthDate %>% ymd()
+p = x_pred %>% na.omit() %>% 
+  group_by(MthDate) %>% 
+  mutate(msumVol=mean(sumVol),mpred=mean(pred)) %>% 
+  ggplot() + 
+  geom_line(aes(x = MthDate, y = msumVol),col="blue") +
+  geom_line(aes(x = MthDate, y = mpred),col="red")
+print(p)
+```
+
+### 第二題 Shark
+```{r}
+brtdf <- rtdf %>% filter(sc == "big")
+mrtdf <- rtdf %>% filter(sc == "medium")
+srtdf <- rtdf %>% filter(sc == "small")
+bmdl <- lm (brtdf$sumVol~ lag(brtdf$sumVol,1)+
+             brtdf$nBuy + brtdf$nI +
+             brtdf$meanPr + brtdf$sumVol12 +
+             brtdf$nBuy12 + brtdf$nI12 + brtdf$meanPr12)
+summary(bmdl)
+mmdl <- lm (mrtdf$sumVol~ lag(mrtdf$sumVol,1)+
+             mrtdf$nBuy + mrtdf$nI +
+             mrtdf$meanPr + mrtdf$sumVol12 +
+             mrtdf$nBuy12 + mrtdf$nI12 + mrtdf$meanPr12)
+summary(mmdl)
+
+smdl <- lm (srtdf$sumVol~ lag(srtdf$sumVol,1)+
+             srtdf$nBuy + srtdf$nI +
+             srtdf$meanPr + srtdf$sumVol12 +
+             srtdf$nBuy12 + srtdf$nI12 + srtdf$meanPr12)
+summary(smdl)
+```
+
+```{r}
+# 大公司
+pred= predict(bmdl,brtdf)
+x_pred <- cbind(brtdf,pred)
+x_pred$MthDate <- x_pred$MthDate %>% ymd()
+x_pred %>% na.omit() %>% 
+  group_by(MthDate) %>% 
+  mutate(msumVol=mean(sumVol),mpred=mean(pred)) %>% 
+  ggplot() + 
+  geom_line(aes(x = MthDate, y = msumVol),col="blue") +
+  geom_line(aes(x = MthDate, y = mpred),col="red") +
+  ggtitle("大公司")
+# 中公司
+pred= predict(mmdl,mrtdf)
+x_pred <- cbind(mrtdf,pred)
+x_pred$MthDate <- x_pred$MthDate %>% ymd()
+x_pred %>% na.omit() %>% 
+  group_by(MthDate) %>% 
+  mutate(msumVol=mean(sumVol),mpred=mean(pred)) %>% 
+  ggplot() + 
+  geom_line(aes(x = MthDate, y = msumVol),col="blue") +
+  geom_line(aes(x = MthDate, y = mpred),col="red") +
+  ggtitle("中公司")
+# 小公司
+pred= predict(smdl,brtdf)
+x_pred <- cbind(srtdf,pred)
+x_pred$MthDate <- x_pred$MthDate %>% ymd()
+x_pred %>% na.omit() %>% 
+  group_by(MthDate) %>% 
+  mutate(msumVol=mean(sumVol),mpred=mean(pred)) %>% 
+  ggplot() + 
+  geom_line(aes(x = MthDate, y = msumVol),col="blue") +
+  geom_line(aes(x = MthDate, y = mpred),col="red") +
+  ggtitle("小公司")
+```
+
+### 第三題 ha↑ha↓ha↑ha↓
+
+```{r include=FALSE}
+rtdd <- do.call(rbind, lapply(1:50, function(i) {
+  #print(paste("code",c_sample$code[i]))
+
+  rt <- read.csv(paste("../data/成交檔/",
+      toString(c_sample$code[i]), "mth04_06.csv",sep=""),
+      header = TRUE, sep=",",stringsAsFactors = FALSE) %>%
+    as_tibble() %>%
+    arrange(MthDate, MthTime) %>%
+    group_by(MthDate) %>%
+    mutate(label= findInterval(MthTime,Dtime)-1,
+           rt = log(MthPr)-log(lag(MthPr, 1)),
+           spreads= round(sd(rt, na.rm=TRUE)*runif(1,10000,300000),2) ,
+           scales=ifelse(i<=15,"big",ifelse(i<=30,"medium","small"))
+           )
+
+  }))
+```
+
+```{r}
+first_Last_15 <- rtdd %>% arrange(MthDate,MthTime) %>% 
+  filter(label == 1) %>% 
+  group_by(MthDate) %>%
+  summarise(f_first = first(MthPr),last15 =last(MthPr))
+
+first_Last_30 <- rtdd %>% arrange(MthDate,MthTime) %>% 
+  filter(label == 1 |label == 2) %>% 
+  group_by(MthDate)%>%
+  summarise(f_first = first(MthPr),last30 =last(MthPr))
+
+first_Last <- rtdd %>% arrange(MthDate,MthTime)  %>% 
+  group_by(MthDate)%>%
+  summarise(f_first = first(MthPr),l_last =last(MthPr)) %>%
+  left_join(first_Last_15) %>%
+  left_join(first_Last_30) %>%
+  mutate(R_overnight = (f_first-lag(l_last))/lag(l_last) ,
+         R_15 = (last15-f_first)/f_first,
+         R_30 = (last30-f_first)/f_first ,
+         R_day = (l_last-f_first)/f_first)
+
+```
+### 第4題 peko peko
+```{r}
+first_Last <- first_Last %>% na.omit()
+first_Last$MthDate <- first_Last$MthDate %>% ymd()
+first_Last_draw <- first_Last[,c(1,6:9)]
+first_Last_draw<- gather(first_Last_draw,t_length,rtn,R_overnight:R_day)
+plot4 = ggplot() + 
+  geom_line(data = first_Last_draw, aes(MthDate, y = rtn,group = t_length,colour = t_length ))
+print(plot4)
+
+```
+
+### 第五題 Peko Peko
+```{r}
+model5 <- lm( first_Last$R_overnight~.,data = first_Last[,c(7:9)])
+
+summary(model5)
+```
+
+### 第六題 neneeeeeeeeee
+```{r}
+first_Last %>% ggplot() + 
+  geom_line(aes(MthDate, y = first_Last$R_overnight ))
+summary(first_Last$R_overnight)
+```
+
+```{r}
+rtdd$MthDate <- rtdd$MthDate %>% ymd()
+rtdd %>% group_by( MthDate, scales) %>%
+  mutate(f_first = mean(first(MthPr)),l_last = mean(last(MthPr))) %>%
+  mutate(R_overnight = (f_first-lag(l_last))/lag(l_last)) %>% 
+  summarise( R_overnight =mean(R_overnight,na.rm = T)) %>% 
+  ggplot( aes(MthDate, y = R_overnight, group = scales,col = scales )) +
+  geom_line()
+```
+
+```{r}
+rtdf$MthDate <- rtdf$MthDate %>% ymd()
+rtdf %>% group_by(MthDate, sc) %>% 
+  mutate(mean_sumVol=mean(sumVol,na.rm=1)) %>% 
+  ggplot(aes(MthDate, mean_sumVol,col=sc))+
+  geom_line()
+```
+
