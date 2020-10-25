@@ -1,0 +1,92 @@
+---
+title: "MAX Exchange 分析(R httr)"
+author: "kidneyweakx"
+date: "2020/10/21"
+output: html_document
+---
+```{r}
+rm(list=ls(all=T))
+if(!require(pacman)) install.packages("pacman")
+pacman::p_load(httr, tidyverse,tidyquant,lubridate)
+```
+[資料來源API_list](https://max.maicoin.com/documents/api_list)
+
+### 所有市場
+```{r}
+# summary
+r <- GET("https://max-api.maicoin.com/api/v2/summary", add_headers(Accept= "application/json"))
+sum <- content(r)
+```
+
+### K線
+```{r}
+market <- 'btctwd';limit <- 1000;
+period <- c(1,5,15,30,60,120,240,360,720,1440,4320,10080)
+url <- paste('https://max-api.maicoin.com/api/v2/k?market=',
+             market,'&limit=',limit,'&period=',period[1], sep='')
+r <- GET(url, add_headers(Accept= "application/json"))
+k <- content(r)
+```
+
+```{r}
+df <- data.frame(matrix(unlist(k), nrow=limit, byrow=T),
+                 stringsAsFactors=FALSE)
+colnames(df) <- c("timestamp", "open", "high", "low", "close", "volume")
+df <- df %>% mutate(timestamp=as_datetime(timestamp)) 
+
+```
+
+```{r}
+# df %>% ggplot(aes(x = timestamp, y = close)) +
+#   geom_barchart(aes(open = open, high = high, low = low, close = close)) +
+#   labs(title = paste(market, "Line Chart"), y = "Closing Price", x = "") +
+#   theme_tq()
+df %>% ggplot(aes(x = timestamp, y = close)) +
+  geom_candlestick(aes(open = open, high = high,
+                       low = low, close = close),
+                   color_up = "firebrick3",
+                   color_down = "chartreuse3",
+                   fill_up  = "firebrick3",
+                   fill_down  = "chartreuse3") +
+  labs(title = paste(market, "Line Chart"),
+       y = "Closing Price", x = "") +
+  theme_tq()
+```
+```{r}
+df %>% ggplot(aes(x = timestamp, y = close)) +
+  geom_candlestick(aes(open = open, high = high,
+                       low = low, close = close),
+                   color_up = "firebrick3",
+                   color_down = "chartreuse3",
+                   fill_up  = "firebrick3",
+                   fill_down  = "chartreuse3") +
+  geom_ma(ma_fun = SMA, n = 5, color = "blue", linetype = 7,size = 1) +
+  geom_ma(ma_fun = SMA, n = 10, color = "orange", linetype = 7, size = 1) + 
+  geom_ma(ma_fun = SMA, n = 20, color = "green", linetype = 7, size = 1) +
+  labs(title = paste(market, "Line Chart"),
+       y = "Closing Price", x = "") +
+  theme_tq()
+```
+
+
+# 繪製均線
+```{r}
+df <- df %>%
+  
+  # 計算10日簡單移動平均線參數
+  tq_mutate(select = c(close),
+            mutate_fun = SMA,
+            n = 10) %>%
+  rename(ma10 = SMA) %>%
+  
+  # 計算20日簡單移動平均線參數
+  tq_mutate(select = c(close),
+            mutate_fun = SMA,
+            n = 20) %>%
+  rename(ma20 = SMA)
+
+df %>% 
+  select(timestamp, close, ma10:ma20) %>% 
+  arrange(timestamp) %>% na.omit()
+```
+

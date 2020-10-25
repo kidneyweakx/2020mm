@@ -25,9 +25,9 @@ pacman::p_load(tidyverse)
 ```{r}
 # 公司規模 CSV
 c_scale <- read.csv("../data/公司規模.csv", header = TRUE, sep=",",stringsAsFactors = FALSE) %>% as_tibble()
-odr_all <-  dir("../data/成交檔") %>% 
+mth_all <-  dir("../data/成交檔") %>% 
   substr(1,4)
-mth_all <-  dir("../data/委託檔") %>% 
+odr_all <-  dir("../data/委託檔") %>% 
   substr(1,4)
 # 抽樣45家公司(大中小各15)
 set.seed(11)

@@ -3,11 +3,11 @@ title: "2020微結構HW2"
 author: "kidneyweakx"
 date: "`r Sys.time()`"
 output:
+  word_document: default
   html_document:
-#    css: ../style.css
     highlight: pygments
     theme: flatly
-  word_document: default
+    css: ../style.css
 subtitle: 迴歸分析
 ---
 
@@ -16,16 +16,21 @@ subtitle: 迴歸分析
 rm(list=ls(all=T))
 knitr::opts_chunk$set(comment = NA)
 if(!require(pacman)) install.packages("pacman")
-pacman::p_load(tidyverse,lubridate)
+pacman::p_load(tidyverse,lubridate, patchwork, SciViews)
 ```
 
 ### 讀取公司規模資料並抽樣
+> 公司規模大小定義
+
++ 大型公司:股本50億以上
++ 中型公司:10-50億
++ 小型公司:10億以下
 ```{r}
 # 公司規模 CSV
 c_scale <- read.csv("../data/公司規模.csv", header = TRUE, sep=",",stringsAsFactors = FALSE) %>% as_tibble()
-odr_all <-  dir("../data/成交檔") %>% 
+mth_all <-  dir("../data/成交檔") %>% 
   substr(1,4)
-mth_all <-  dir("../data/委託檔") %>% 
+odr_all <-  dir("../data/委託檔") %>% 
   substr(1,4)
 
 # 抽樣50家公司(大中小各15)
@@ -33,8 +38,19 @@ set.seed(111)
 c_sample <- c_scale %>% 
   filter(code %in% odr_all & code %in% mth_all) %>% 
   sample_n(50)
-c_sample
+print(tbl_df(c_sample), n=50)
 ```
+
+### 時間間隔
+```{r}
+# 建立時間區間間隔
+Dtime <- c(0,9000000,9150000,9300000,9450000,9600000,
+  10150000,10300000,10450000,10600000,
+  11150000,11300000,11450000,11600000,
+  12150000,12300000,12450000,12600000,
+  13150000,13300000)
+```
+
 ### Read data (test origin data)
 ```{r}
 # 讀取成交檔和委託檔
@@ -44,24 +60,19 @@ Mth <-  read.csv(paste("../data/成交檔/",
       header = TRUE, sep=",",stringsAsFactors = FALSE) %>% as_tibble()
 ```
 
+
+
+### 看一間公司
 ```{r}
-Dtime <- c(0,9000000,9150000,9300000,9450000,9600000,
-  10150000,10300000,10450000,10600000,
-  11150000,11300000,11450000,11600000,
-  12150000,12300000,12450000,12600000,
-  13150000,13300000)
+# 加入label
 Rt <- Mth %>% arrange(MthDate, MthTime) %>% 
   group_by(MthDate) %>% 
   mutate(label= findInterval(MthTime,Dtime)-1,
          sumVol = sum(MthShr)) %>% 
   group_by(MthDate,BuySell) %>%
   mutate(isBuy = ifelse(BuySell == "B",1,0),
-                                      isI = ifelse(InvestType == "I",1,0)) %>%
+         isI = ifelse(InvestType == "I",1,0)) %>%
   ungroup()
-```
-
-### 看一間公司
-```{r}
 x<- Rt %>%
   group_by(MthDate) %>% 
   summarise(nBuy = sum(isBuy),nI = sum(isI),
@@ -71,8 +82,11 @@ Rt12 <- Rt %>% filter(label == 1|label == 2) %>%
   group_by(MthDate) %>%
   summarise(nBuy12 = sum(isBuy),
             nI12= sum(isI),
-            meanPr12 = mean(MthPr),sumVol12 = sum(MthShr))
+            meanPr12 = mean(MthPr),
+            sumVol12 = sum(MthShr))
+
 x <- left_join(x, Rt12)
+
 # 迴歸模型
 mdl <- lm (x$sumVol~ lag(x$sumVol,1)+
              x$nBuy + x$nI +
@@ -89,8 +103,15 @@ p = ggplot() +
   geom_line(data = x_pred, aes(x = MthDate, y = pred), col = "red") 
 print(p)
 ```
+
 ### do.call peko
-```{r message=FALSE, include=FALSE}
+> 資料解釋
+
+1. nBuy 買量 
+2. nI 自然人買輛 
+3. meanPr 平均價 
+4. sumVol 總交易量
+```{r}
 
 rtdf <- do.call(rbind, lapply(1:50, function(i) {
   #print(paste("code",c_sample$code[i]))
@@ -112,41 +133,60 @@ rtdf <- do.call(rbind, lapply(1:50, function(i) {
            MthShr12 = ifelse(label==1|label==2,MthShr,0)) %>%
     ungroup() %>%
     group_by(MthDate) %>% 
-    summarise(sc=c_sample$firm_size[i],
-              nBuy = sum(isBuy),
-              nI = sum(isI),
-              meanPr = mean(MthPr,na.rm=1),
-              sumVol = sum(MthShr),
-              nBuy12 = sum(isBuy12),
-              nI12= sum(isI12),
-              meanPr12 = mean(MthPr12,na.rm=1),
-              sumVol12 = sum(MthShr12))
+    summarise(sc=c_sample$firm_size[i], # 規模
+              nBuy = sum(isBuy/1000), # 買量 
+              nI = sum(isI/1000), # 自然人買輛 
+              meanPr = mean(MthPr,na.rm=1), # 平均價 
+              sumVol = sum(MthShr/1000), # 總交易量
+              nBuy12 = sum(isBuy12/1000),
+              nI12= sum(isI12/1000),
+              meanPr12 = mean(MthPr12, na.rm=1),
+              sumVol12 = sum(MthShr12/1000))
   }))
 
 ```
 
-### 做LM  konpeko
+
+
+
+### 第一題: 價量關係
+
+Note: Stepwise regression 相關性
 ```{r}
-# 迴歸 50家公司
+# 迴歸50家公司
 mdl <- lm (rtdf$sumVol~ lag(rtdf$sumVol,1)+
              rtdf$nBuy + rtdf$nI +
              rtdf$meanPr + rtdf$sumVol12 +
              rtdf$nBuy12 + rtdf$nI12 + rtdf$meanPr12)
 summary(mdl)
+
 pred= predict(mdl,rtdf)
 x_pred <- cbind(rtdf,pred)
 x_pred$MthDate <- x_pred$MthDate %>% ymd()
-p = x_pred %>% na.omit() %>% 
+x_pred %>% na.omit() %>% 
   group_by(MthDate) %>% 
   mutate(msumVol=mean(sumVol),mpred=mean(pred)) %>% 
   ggplot() + 
   geom_line(aes(x = MthDate, y = msumVol),col="blue") +
-  geom_line(aes(x = MthDate, y = mpred),col="red")
-print(p)
+  geom_line(aes(x = MthDate, y = mpred),col="red") +
+  xlab("日期") + ylab("總交易量")
 ```
 
-### 第二題 Shark
+<span style="font-size:20px">`r "\U1F4A1"` 迴歸解釋：</span><br>
+&emsp; ■ 加入partial R-squared
+&emsp; ■ 製作昨天今天明天價量關係
+</p class="wwl">
+
+### 第二題: 挑選其他變數決定交易量差別 Shark
+> 下方為以公司規模來看
+
 ```{r}
+#大公司 13家 中公司 26家 小公司 11家
+c_sample %>% group_by(firm_size) %>% summarise(n())
+```
+
+```{r}
+# 大中小公司各做迴歸
 brtdf <- rtdf %>% filter(sc == "big")
 mrtdf <- rtdf %>% filter(sc == "medium")
 srtdf <- rtdf %>% filter(sc == "small")
@@ -154,18 +194,19 @@ bmdl <- lm (brtdf$sumVol~ lag(brtdf$sumVol,1)+
              brtdf$nBuy + brtdf$nI +
              brtdf$meanPr + brtdf$sumVol12 +
              brtdf$nBuy12 + brtdf$nI12 + brtdf$meanPr12)
-summary(bmdl)
+summary(bmdl) # 大公司模型
+
 mmdl <- lm (mrtdf$sumVol~ lag(mrtdf$sumVol,1)+
              mrtdf$nBuy + mrtdf$nI +
              mrtdf$meanPr + mrtdf$sumVol12 +
              mrtdf$nBuy12 + mrtdf$nI12 + mrtdf$meanPr12)
-summary(mmdl)
+summary(mmdl) # 中公司模型
 
 smdl <- lm (srtdf$sumVol~ lag(srtdf$sumVol,1)+
              srtdf$nBuy + srtdf$nI +
              srtdf$meanPr + srtdf$sumVol12 +
              srtdf$nBuy12 + srtdf$nI12 + srtdf$meanPr12)
-summary(smdl)
+summary(smdl) # 小公司模型
 ```
 
 ```{r}
@@ -179,7 +220,7 @@ x_pred %>% na.omit() %>%
   ggplot() + 
   geom_line(aes(x = MthDate, y = msumVol),col="blue") +
   geom_line(aes(x = MthDate, y = mpred),col="red") +
-  ggtitle("大公司")
+  ggtitle("大公司") + xlab("日期") + ylab("總交易量")
 # 中公司
 pred= predict(mmdl,mrtdf)
 x_pred <- cbind(mrtdf,pred)
@@ -190,7 +231,7 @@ x_pred %>% na.omit() %>%
   ggplot() + 
   geom_line(aes(x = MthDate, y = msumVol),col="blue") +
   geom_line(aes(x = MthDate, y = mpred),col="red") +
-  ggtitle("中公司")
+  ggtitle("中公司") + xlab("日期") + ylab("總交易量")
 # 小公司
 pred= predict(smdl,brtdf)
 x_pred <- cbind(srtdf,pred)
@@ -201,7 +242,7 @@ x_pred %>% na.omit() %>%
   ggplot() + 
   geom_line(aes(x = MthDate, y = msumVol),col="blue") +
   geom_line(aes(x = MthDate, y = mpred),col="red") +
-  ggtitle("小公司")
+  ggtitle("小公司") + xlab("日期") + ylab("總交易量")
 ```
 
 ### 第三題 ha↑ha↓ha↑ha↓
@@ -224,44 +265,79 @@ rtdd <- do.call(rbind, lapply(1:50, function(i) {
 
   }))
 ```
+> 報酬率
+
++ $R_t = \log(P_t)-\log(P_{t-1})$
+
++ $\ln(P_t/P_{t-1})$
 
 ```{r}
+# 前15分
 first_Last_15 <- rtdd %>% arrange(MthDate,MthTime) %>% 
   filter(label == 1) %>% 
   group_by(MthDate) %>%
-  summarise(f_first = first(MthPr),last15 =last(MthPr))
-
+  summarise(f_first = first(MthPr),
+            last15 =last(MthPr))
+# 前30分
 first_Last_30 <- rtdd %>% arrange(MthDate,MthTime) %>% 
   filter(label == 1 |label == 2) %>% 
   group_by(MthDate)%>%
-  summarise(f_first = first(MthPr),last30 =last(MthPr))
+  summarise(f_first = first(MthPr),
+            last30 =last(MthPr))
 
+# 報酬
 first_Last <- rtdd %>% arrange(MthDate,MthTime)  %>% 
   group_by(MthDate)%>%
   summarise(f_first = first(MthPr),l_last =last(MthPr)) %>%
   left_join(first_Last_15) %>%
   left_join(first_Last_30) %>%
   mutate(R_overnight = (f_first-lag(l_last))/lag(l_last) ,
-         R_15 = (last15-f_first)/f_first,
+         R_15 = (last15-f_first) /f_first ,
          R_30 = (last30-f_first)/f_first ,
          R_day = (l_last-f_first)/f_first)
+         # Rt_overnight = log(f_first)-log(lag(l_last,1)),
+         # Rt_15 = log(last15)-log(f_first),
+         # Rt_30 = log(last30)-log(f_first) ,
+         # Rt_day = log(l_last)-log(f_first))
 
 ```
+
+```{r}
+summary(first_Last[,c(-1:-5)])
+```
+
 ### 第4題 peko peko
 ```{r}
 first_Last <- first_Last %>% na.omit()
 first_Last$MthDate <- first_Last$MthDate %>% ymd()
-first_Last_draw <- first_Last[,c(1,6:9)]
-first_Last_draw<- gather(first_Last_draw,t_length,rtn,R_overnight:R_day)
-plot4 = ggplot() + 
-  geom_line(data = first_Last_draw, aes(MthDate, y = rtn,group = t_length,colour = t_length ))
-print(plot4)
+# 15分
+plot_15 <- first_Last %>% 
+  ggplot(aes(MthDate, R_15)) + scale_y_continuous(limits = c(-20,125))+
+  geom_line()+ ggtitle("前15分鐘報酬率") + xlab("日期") + ylab("報酬率")
+plot_30 <- first_Last %>% 
+  ggplot(aes(MthDate, R_30)) + scale_y_continuous(limits = c(-20,125))+
+  geom_line()+ ggtitle("前30分鐘報酬率") + xlab("日期") + ylab("報酬率")
+plot_day <- first_Last %>% 
+  ggplot(aes(MthDate, R_day)) + scale_y_continuous(limits = c(-20,125))+
+  geom_line()+ ggtitle("日內報酬率") + xlab("日期") + ylab("報酬率")
+plot_overnight <- first_Last %>% 
+  ggplot(aes(MthDate, R_overnight)) + scale_y_continuous(limits = c(-20,125))+
+  geom_line()+ ggtitle("隔日報酬率") + xlab("日期") + ylab("報酬率")
+
+plot_15 + plot_30 + plot_day + plot_overnight
+
+
+first_Last[,c(-2:-5)] %>% 
+  gather(type,rtn,R_overnight:R_day) %>% 
+  ggplot(aes(MthDate, y = rtn, col=type)) +
+  geom_line(lwd=1) + labs(title="報酬率對比圖",x="日期",y="報酬率",col="報酬率")+ggsave('1.png')
+
 
 ```
 
 ### 第五題 Peko Peko
 ```{r}
-model5 <- lm( first_Last$R_overnight~.,data = first_Last[,c(7:9)])
+model5 <- lm( first_Last$R_overnight~ ., data = first_Last[,c(7:9)])
 
 summary(model5)
 ```
@@ -269,25 +345,33 @@ summary(model5)
 ### 第六題 neneeeeeeeeee
 ```{r}
 first_Last %>% ggplot() + 
-  geom_line(aes(MthDate, y = first_Last$R_overnight ))
+  geom_line(aes(MthDate, y = R_overnight )) +
+  ggtitle("隔日報酬率(scales較小)") + xlab("日期") + ylab("報酬率")
 summary(first_Last$R_overnight)
 ```
 
 ```{r}
 rtdd$MthDate <- rtdd$MthDate %>% ymd()
 rtdd %>% group_by( MthDate, scales) %>%
-  mutate(f_first = mean(first(MthPr)),l_last = mean(last(MthPr))) %>%
+  mutate(f_first = mean(first(MthPr), na.rm=1),l_last = mean(last(MthPr),na.rm=1)) %>%
   mutate(R_overnight = (f_first-lag(l_last))/lag(l_last)) %>% 
   summarise( R_overnight =mean(R_overnight,na.rm = T)) %>% 
   ggplot( aes(MthDate, y = R_overnight, group = scales,col = scales )) +
-  geom_line()
+  geom_line(lwd=1) + labs(x="日期",y="隔日報酬率",col="規模")
 ```
 
 ```{r}
 rtdf$MthDate <- rtdf$MthDate %>% ymd()
 rtdf %>% group_by(MthDate, sc) %>% 
-  mutate(mean_sumVol=mean(sumVol,na.rm=1)) %>% 
+  mutate(mean_sumVol=log(mean(sumVol,na.rm=1))) %>% 
   ggplot(aes(MthDate, mean_sumVol,col=sc))+
-  geom_line()
+  geom_line(lwd=1) + labs(x="日期",y="日總交易量(log)",col="規模")
 ```
+
+### 上課補充
+
+> 兩種迴歸運用
+
+1. stepwise regression 相關性
+2. endogeneity regression 內生性
 
