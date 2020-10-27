@@ -1,0 +1,155 @@
+---
+title: "2020微結構HW3"
+author: "kidneyweakx"
+date: "`r Sys.time()`"
+output:
+  word_document: default
+  html_document:
+    highlight: pygments
+    theme: flatly
+    css: ../style.css
+subtitle: Kyle $\lambda$
+---
+# 前處理
+
+### 下載packages
+```{r results='hide', message=FALSE, warning=FALSE, echo=F}
+rm(list=ls(all=T));gc()
+knitr::opts_chunk$set(comment = NA)
+if(!require(pacman)) install.packages("pacman")
+pacman::p_load(tidyverse, data.table)
+set.seed(111)
+```
+
+### 讀取公司規模資料
+```{r}
+# 公司規模 CSV
+c_scale <- read.csv("../data/公司規模.csv", header = TRUE, 
+                    sep=",",stringsAsFactors = FALSE) %>% as_tibble()
+# mth_all <-  dir("../data/成交檔")
+# mth_0103 <- dir(paste0("../data/成交檔/", mth_all[1])) %>% substr(1,4)
+# mth_0406 <- dir(paste0("../data/成交檔/", mth_all[2])) %>% substr(1,4)
+# mth_0709 <- dir(paste0("../data/成交檔/", mth_all[3])) %>% substr(1,4)
+# mth_1012 <- dir(paste0("../data/成交檔/", mth_all[4])) %>% substr(1,4)
+# mth_all <- paste0(mth_all,'/')
+# mth_tail <- c("mth01_03.csv","mth04_06.csv","mth07_09.csv","mth10_12.csv")
+# code <- c_scale %>%
+#   filter(code %in%  mth_0103 & code %in%  mth_0406 &
+#            code %in%  mth_0709 &  code %in% mth_1012)
+# code <- code$code %>% sample(50) %>% head(10)
+# # 獲取所有公司資料
+# mth_data <-  do.call(rbind, lapply(1:length(code), function(i) {
+#   do.call(rbind, lapply(1:4, function(j) {
+#     path <- paste0("../data/成交檔/",mth_all[j],c_scale$code[i],mth_tail[j])
+#     mth <- tryCatch(fread(path,data.table = F, encoding = 'UTF-8'),
+#                     error=function(e) NULL)
+#   }))
+# }))
+# save(mth_data, file = "mthdata.RData")
+load("mthdata.RData") # 一年50家公司資料
+# sapply(1:50,function(i){print(code[i])})
+# rm(mth_0103,mth_0406,mth_0709,mth_1012,mth_all,mth_tail);gc();
+```
+
+```{r}
+c_scale[c_scale$code %in% code,c(1:4)]
+```
+
+```{r}
+# mth_data$StkNo %>% unique()
+TEJ <- fread("../data/tejhw3.csv",data.table = F, encoding = 'UTF-8',header = T)
+print(TEJ$證券代碼)
+TEJ<-TEJ[,c(1,5:6)]
+colnames(TEJ) <- c("StkNo","NW","NWR")
+TEJ$StkNo <- str_extract(TEJ$StkNo, "[0-9]+") %>% as.numeric()
+TEJ <- TEJ %>% mutate(NWM = NW * NWR)
+```
+> Kyle $\lambda$
+
++ $X_t = \beta(\theta_t - P_t)$
++ $\beta = {流動性 / 不確定性}$
+
+### 第一題: 法人量估計
+Note: 計算 $\beta$ : 估計出來的均衡價代入$X_t = \beta(\theta_t - P_t)$
+```{r}
+Season <- function(i){
+  a <- lubridate::ymd(i) %>% month()
+  return(ceiling(a/3))
+}
+Dtime <- c(0,9000000,9150000,9300000,9450000,9600000,
+  10150000,10300000,10450000,10600000,
+  11150000,11300000,11450000,11600000,
+  12150000,12300000,12450000,12600000,
+  13150000,13300000)
+```
+```{r}
+Rt <- mth_data %>% arrange(MthDate, MthTime)  %>% 
+  group_by(MthDate, StkNo) %>% 
+   mutate(rt = log(MthPr)-log(lag(MthPr, 1)),
+          label= findInterval(MthTime,Dtime)-1,
+          S = Season(MthDate),
+          rstd = sd(rt, na.rm=TRUE)) 
+Rt <- Rt%>% group_by(StkNo) %>% 
+  mutate(
+    ami = abs(mean(rt,na.rm = TRUE)) / mean(MthShr,na.rm = TRUE), 
+         bdd = mean(rstd), beta = ami/bdd)
+```
+```{r}
+RtB <- Rt %>% filter(BuySell == "B" & InvestType == "J")
+df <- RtB %>% group_by(StkNo) %>% 
+  summarise(vol = sum(MthShr,na.rm=1),Pr= mean(MthPr,na.rm=1),
+            bdd = mean(bdd,na.rm=1),ami=(mean(ami,na.rm=1))) %>% ungroup()
+df <- left_join(df,TEJ, by="StkNo")
+df <- df %>% group_by(StkNo) %>% 
+  mutate(Eq_sp= Pr- NWM, beta = mean(vol / Eq_sp,na.rm=1))
+summary(df[,-1])
+```
+### 第二題: 交易強度: 迴歸
+被解釋變數 $\beta_i$ 
+每個公司一個beta橫斷面(取mean) 
+
+```{r}
+mdl <- lm (df$beta~ df$ami+df$bdd)
+summary(mdl)
+
+pred= predict(mdl,df)
+x_pred <- cbind(df,pred=pred)
+
+x_pred[,c(1,10:11)]
+```
+
+### 3. $\hat P_(i,t)$ 估計 panel regression
+$P=P_0+\lambda*Q$
+$\lambda=\frac{P-P_0}{Q}$
+```{r}
+Rtx <- Rt %>% filter(BuySell=="S"&InvestType=="J") %>% 
+  group_by(StkNo, S) %>% 
+  summarise(sVol=sum(MthShr), MeanPr = mean(MthPr)) %>% 
+  mutate(lambda= (MeanPr-lag(MeanPr))/sVol)
+Rtx %>% summary()
+```
+
+### 4. $\lambda$
+
+```{r}
+Rta <- Rt  %>% group_by(StkNo, S) %>% 
+  summarise(sVol=sum(MthShr), MeanPr = mean(MthPr)) %>% 
+  mutate(lagPr=lag(MeanPr))
+colnames(Rta) <- c("StkNo","S","aVol","aMeanPr","alagPr")
+Rta <- left_join(Rta,Rtx,by=c("StkNo", "S"))
+Rta <- Rta %>% mutate(PP=alagPr+lambda*aVol)
+Rta <- left_join(Rta, c_scale[,c(1,4)],by=c("StkNo"="code"))
+```
+
+
+```{r}
+print(Rta[Rta$S>1,c(1:2,7:10)],n=30)
+```
+---
+
+### 5. $\lambda$
+```{r}
+Rta %>% group_by(firm_size) %>% summarise(mean(lambda,na.rm=T))
+```
+
+
