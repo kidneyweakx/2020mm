@@ -1,95 +1,112 @@
 ---
 title: "MAX Exchange 分析(Python API)"
 author: "kidneyweakx"
-date: "2020/10/21"
-output: html_document
+date: "`r Sys.time()`"
+output:
+  html_document:
+    highlight: pygments
+    theme: flatly
+    css: ../style.css
 ---
-```{r}
-rm(list=ls(all=T))
+```{r include=FALSE}
+rm(list=ls(all=T));gc()
 if(!require(pacman)) install.packages("pacman")
 pacman::p_load(tidyverse,tidyquant, reticulate)
-# python anaconda 位置
+# python anaconda 位置 (修改cloud成你的環境，conda為ana/miniconda路徑)
 use_condaenv("cloud",conda = "D:\\app\\Anaconda3\\condabin\\conda") 
 ```
-[資料來源API_list](https://max.maicoin.com/documents/api_list)
+
+### [資料來源max.maicoin.com/documents/api_list](https://max.maicoin.com/documents/api_list)
+
+> 加入API方法 [Python API](https://github.com/kulisu/max-exchange-api-python3)
+
++ 使用`git clone https://github.com/kulisu/max-exchange-api-python3` 到本地
++ 將max資料夾放置在該Rmd旁
++ `file.edit(path.expand(file.path("~", ".Renviron")))`
++ 加入環境變數範例: `MAX_API_KEY="yourkey"`
++ 加入後**重新開啟** Rstudio
 
 ```{r}
-# file.edit(path.expand(file.path("~", ".Renviron")))
-# 加入後重新開啟 Rstudio
 # 加入 API (reticulate Python module)
-max <- import("max.client")
+max <- import("max.client") # Python方法
 client <- max$Client(Sys.getenv("MAX_API_KEY"),Sys.getenv("MAX_API_SECRET"))
 ```
 
+### Python data轉換dataframe
++ 有時候會失效(需要運用apply處理)
+
 ```{r}
+# 要到的data轉換成dataframe
 r2df <- function(l){
   data.frame(matrix(unlist(l), nrow=length(l), byrow=T),
                  stringsAsFactors=FALSE)}
 ```
-### 所有市場
+
+### 列出所有交易所可交易市場
+
 ```{r}
 # summary
 selectedmarket <- client$get_public_all_markets() %>% r2df
+print(selectedmarket$X1)
+grep("usdt", selectedmarket$X1, value=T)# 測試交易幣種
 ```
 
-
-### K線
+### 繪製簡易K線
 ```{r}
-market <- 'btctwd'; limit <- 1000;
-period <- c(1,5,15,30,60,120,240,360,720,1440,4320,10080)
-k <-  client$get_public_k_line('btctwd', toString(limit), toString(period[5])) %>%
-  r2df()
+trange <- function(x){(Sys.time() - x) %>% as.numeric() %>% round()}
+market <- 'btctwd'; limit <- 10000; # make it bigger that it not limit
+period <- c(1,5,15,30,60,120,240,360,720,1440,4320,10080) # 時間 (分鐘)
+# 需加入時間
+k <-  client$get_public_k_line('btctwd', 
+                               toString(limit), 
+                               toString(period[2]),
+                               toString(trange(days(7)))) %>%  r2df()
 ```
 
 ```{r}
 colnames(k) <- c("timestamp", "open", "high", "low", "close", "volume")
 df <- k %>% mutate(timestamp=as_datetime(timestamp)) 
-
 ```
 
 ```{r}
-# df %>% ggplot(aes(x = timestamp, y = close)) +
-#   geom_barchart(aes(open = open, high = high, low = low, close = close)) +
-#   labs(title = paste(market, "Line Chart"), y = "Closing Price", x = "") +
-#   theme_tq()
 df %>% ggplot(aes(x = timestamp, y = close)) +
-  geom_candlestick(aes(open = open, high = high,
-                       low = low, close = close),
-                   color_up = "firebrick3",
-                   color_down = "chartreuse3",
-                   fill_up  = "firebrick3",
-                   fill_down  = "chartreuse3") +
+  geom_barchart(aes(open = open, high = high, low = low, close = close),
+                colour_up = "firebrick3", colour_down = "chartreuse3",
+                fill_up  = "firebrick3", fill_down  = "chartreuse3", size = 1) +
   labs(title = paste(market, "Line Chart"),
        y = "Closing Price", x = "") +
+  geom_ma(color = "darkblue", linetype = 7,size = 1) +
+ # coord_x_datetime(xlim=c("2020-10-10",max(df$timestamp)),expand = c(0,0)) +
   theme_tq()
-```
+```  
 ```{r}
+# 一小時內的K線
+end <- max(df$timestamp)
+start <- end - hours(1)
 df %>% ggplot(aes(x = timestamp, y = close)) +
-  geom_candlestick(aes(open = open, high = high,
+  geom_barchart(aes(open = open, high = high,
                        low = low, close = close),
-                   color_up = "firebrick3",
-                   color_down = "chartreuse3",
-                   fill_up  = "firebrick3",
-                   fill_down  = "chartreuse3") +
-  geom_ma(ma_fun = SMA, n = 5, color = "blue", linetype = 7,size = 1) +
-  geom_ma(ma_fun = SMA, n = 10, color = "orange", linetype = 7, size = 1) + 
-  geom_ma(ma_fun = SMA, n = 20, color = "green", linetype = 7, size = 1) +
-  labs(title = paste(market, "Line Chart"),
+                colour_up = "firebrick3", colour_down = "chartreuse3",
+                fill_up  = "firebrick3", fill_down  = "chartreuse3", size = 6) +
+  geom_ma(ma_fun = SMA, n = 5, color = "yellow", linetype = 7,size = 1) +
+  geom_ma(ma_fun = SMA, n = 10, color = "blue", linetype = 7, size = 1) + 
+  labs(title = paste(market, "Line Chart(1hr)"),
        y = "Closing Price", x = "") +
+  coord_x_datetime(xlim=c(start, end)) +
   theme_tq()
 ```
 
 
-# 繪製均線
+### 繪製均線
 ```{r}
 df <- df %>%
-  # 計算10日簡單移動平均線參數
+  # 計算10個單位簡單移動平均線參數
   tq_mutate(select = c(close),
             mutate_fun = SMA,
             n = 10) %>%
   rename(ma10 = SMA) %>%
   
-  # 計算20日簡單移動平均線參數
+  # 計算20個單位簡單移動平均線參數
   tq_mutate(select = c(close),
             mutate_fun = SMA,
             n = 20) %>%
@@ -98,5 +115,35 @@ df <- df %>%
 df %>% 
   select(timestamp, close, ma10:ma20) %>% 
   arrange(timestamp) %>% na.omit()
+```
+
+### 策略模擬(尚未完成)
+```{r}
+# 短均 > 長均 (黃金交叉)
+
+```
+
+### 布林通道
+```{r}
+# 三小時內的K線
+end <- max(df$timestamp)
+start <- end - hours(3)
+df %>% ggplot(aes(x = timestamp, y = close, 
+                  open = open, high = high,
+                  low = low, close = close)) +
+  geom_barchart(colour_up = "firebrick3", colour_down = "chartreuse3",
+                fill_up  = "firebrick3", fill_down  = "chartreuse3", size = 3) +
+  geom_ma(ma_fun = SMA, n = 5, color = "yellow", linetype = 7,size = 1) +
+  geom_ma(ma_fun = SMA, n = 10, color = "blue", linetype = 7, size = 1) +
+  geom_bbands(ma_fun = SMA, sd = 2, n = 10, linetype = 5) + # 布林通道
+  labs(title = paste(market, "Line Chart(3hr)"),
+       y = "Closing Price", x = "") +
+  coord_x_datetime(xlim=c(start, end)) +
+  theme_tq()
+```
+
+```{r include=FALSE}
+### 交易量統計
+trades <- client$get_public_recent_trades("btctwd") %>% r2df
 ```
 

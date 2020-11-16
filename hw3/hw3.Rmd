@@ -26,17 +26,17 @@ set.seed(111)
 # 公司規模 CSV
 c_scale <- read.csv("../data/公司規模.csv", header = TRUE, 
                     sep=",",stringsAsFactors = FALSE) %>% as_tibble()
-# mth_all <-  dir("../data/成交檔")
-# mth_0103 <- dir(paste0("../data/成交檔/", mth_all[1])) %>% substr(1,4)
-# mth_0406 <- dir(paste0("../data/成交檔/", mth_all[2])) %>% substr(1,4)
-# mth_0709 <- dir(paste0("../data/成交檔/", mth_all[3])) %>% substr(1,4)
-# mth_1012 <- dir(paste0("../data/成交檔/", mth_all[4])) %>% substr(1,4)
-# mth_all <- paste0(mth_all,'/')
-# mth_tail <- c("mth01_03.csv","mth04_06.csv","mth07_09.csv","mth10_12.csv")
-# code <- c_scale %>%
-#   filter(code %in%  mth_0103 & code %in%  mth_0406 &
-#            code %in%  mth_0709 &  code %in% mth_1012)
-# code <- code$code %>% sample(50) %>% head(10)
+mth_all <-  dir("../data/成交檔")
+mth_0103 <- dir(paste0("../data/成交檔/", mth_all[1])) %>% substr(1,4)
+mth_0406 <- dir(paste0("../data/成交檔/", mth_all[2])) %>% substr(1,4)
+mth_0709 <- dir(paste0("../data/成交檔/", mth_all[3])) %>% substr(1,4)
+mth_1012 <- dir(paste0("../data/成交檔/", mth_all[4])) %>% substr(1,4)
+mth_all <- paste0(mth_all,'/')
+mth_tail <- c("mth01_03.csv","mth04_06.csv","mth07_09.csv","mth10_12.csv")
+code <- c_scale %>%
+  filter(code %in%  mth_0103 & code %in%  mth_0406 &
+           code %in%  mth_0709 &  code %in% mth_1012)
+code <- code$code %>% sample(50)
 # # 獲取所有公司資料
 # mth_data <-  do.call(rbind, lapply(1:length(code), function(i) {
 #   do.call(rbind, lapply(1:4, function(j) {
@@ -95,13 +95,13 @@ Rt <- Rt%>% group_by(StkNo) %>%
          bdd = mean(rstd), beta = ami/bdd)
 ```
 ```{r}
-RtB <- Rt %>% filter(BuySell == "B" & InvestType == "J")
+RtB <- Rt %>% filter(InvestType == "J")
 df <- RtB %>% group_by(StkNo) %>% 
   summarise(vol = sum(MthShr,na.rm=1),Pr= mean(MthPr,na.rm=1),
             bdd = mean(bdd,na.rm=1),ami=(mean(ami,na.rm=1))) %>% ungroup()
 df <- left_join(df,TEJ, by="StkNo")
 df <- df %>% group_by(StkNo) %>% 
-  mutate(Eq_sp= Pr- NWM, beta = mean(vol / Eq_sp,na.rm=1))
+  mutate(Eq_sp= NWM - Pr, beta = mean(vol / Eq_sp,na.rm=1))
 summary(df[,-1])
 ```
 ### 第二題: 交易強度: 迴歸
