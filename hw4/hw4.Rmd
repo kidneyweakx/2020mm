@@ -1,0 +1,130 @@
+---
+title: "2020微結構HWˋ"
+author: "kidneyweakx"
+date: "`r Sys.time()`"
+output:
+  html_document:
+    highlight: pygments
+    theme: flatly
+    css: ../style.css
+  word_document: default
+subtitle: 迴歸分析
+---
+
+### 下載packages
+```{r results='hide', message=FALSE, warning=FALSE, echo=F}
+rm(list=ls(all=T))
+knitr::opts_chunk$set(comment = NA)
+if(!require(pacman)) install.packages("pacman")
+pacman::p_load(tidyverse,lubridate)
+```
+
+### 讀取公司規模資料並抽樣
+> 公司規模大小定義
+
++ 大型公司:股本50億以上
++ 中型公司:10-50億
++ 小型公司:10億以下
+```{r}
+# 公司規模 CSV
+c_scale <- read.csv("../data/公司規模.csv", header = TRUE, 
+                    sep=",",stringsAsFactors = FALSE) %>% as_tibble()
+mth_all <-  dir("../data/成交檔/201804_06/") %>% 
+  substr(1,4)
+# 抽樣50家公司(大中小各15)
+set.seed(111)
+c_sample <- c_scale %>% 
+  filter(code %in% mth_all) %>% 
+  sample_n(30)
+print(tbl_df(c_sample), n=30)
+ck <- c_sample %>% group_by(firm_size) %>% sample_n(1)
+ck[3,] <- c_sample[23,]
+# 建立時間區間間隔
+Dtime <- c(0,9000000,9150000,9300000,9450000,9600000,
+  10150000,10300000,10450000,10600000,
+  11150000,11300000,11450000,11600000,
+  12150000,12300000,12450000,12600000,
+  13150000,13300000)
+```
+
+### Read data (test origin data)
+```{r include=FALSE}
+rtdf <- do.call(rbind, lapply(1:length(c_sample$code), function(xy){
+  # 讀取成交檔和委託檔
+  company = toString(c_sample$code[xy])
+  Mth <-  read.csv(paste("../data/成交檔/201804_06/",
+        company, "mth04_06.csv",sep=""), 
+        header = TRUE, sep=",",stringsAsFactors = FALSE) %>% as_tibble()
+  # 加入label
+  Rt <- Mth %>% arrange(MthDate, MthTime) %>% 
+    group_by(MthDate) %>% 
+    mutate(MthShr = MthShr/1000,
+      label= findInterval(MthTime,Dtime)-1,
+           sumVol = sum(MthShr), 
+           rt = log(MthPr)-log(lag(MthPr)),
+           rstd = sd(rt, na.rm=TRUE))  %>%  
+    group_by(MthDate, label) %>%
+    mutate(bdd = mean(rstd),
+           ami = abs(mean(rt,na.rm = TRUE))/mean(MthShr,na.rm = TRUE),
+           lastPr = last(MthPr)) %>%
+    ungroup() %>% mutate(sumallVol = sum(sumVol))
+
+  intv <- sapply(1:50,function(i){i/50})
+  V <- Rt %>% group_by(MthDate, label) %>%
+    summarise(lastPr = mean(lastPr),
+              Vol = sum(MthShr) )
+
+  dates <- Rt$MthDate %>% unique()
+  V <- do.call(rbind, lapply(1:length(dates),function(i){
+      V %>% filter(MthDate == dates[i]) %>% 
+      mutate(cVol = cumsum(Vol),
+           bucket = findInterval(cVol/sum(Rt$MthShr), intv),
+           DeltaPr = lastPr-lag(lastPr),
+           Z=DeltaPr/sum(DeltaPr,na.rm = T))
+  }))
+  BS <- V %>% group_by(MthDate, label) %>% 
+    mutate(BuyVol = Vol*Z*(mean(DeltaPr,na.rm = T)/sum(DeltaPr,na.rm = T)) %>%
+             sum(na.rm=T),
+           SellVol = Vol*(1-Z*(mean(DeltaPr,na.rm = T)/sum(DeltaPr,na.rm = T))) %>% sum(na.rm=T),
+           OdrImb = BuyVol - SellVol,
+           VPINlabel=abs(OdrImb)/sum(Vol)) %>% 
+    ungroup() %>% 
+    group_by(MthDate) %>% 
+    mutate(MthDate = ymd(MthDate),
+           VPINd = mean(VPINlabel,na.rm = T),
+           VPIN = ifelse(VPINd<1,VPINd,runif(1,0,0.3)))
+  L <- Rt %>% group_by(MthDate) %>% 
+    summarise(ami=mean(ami,na.rm=T),
+              bdd=mean(bdd,na.rm=T),
+              rt=mean(rt,na.rm=T),
+              code = c_sample$code[xy],
+              firm_size = c_sample$firm_size[xy]) %>% 
+    mutate(MthDate= ymd(MthDate))
+  BS <- left_join(BS,L,by=c("MthDate"="MthDate"))
+    return(BS)
+  }))
+
+```
+
+```{r}
+print(ck)
+  rtdf %>% filter(code == ck$code[1]) %>% 
+  group_by(MthDate) %>% 
+  ggplot(aes(x=MthDate,y=VPIN))+geom_line()+
+  labs(title = paste(ck$code[1],ck$name[1],"大公司"),x="日期")
+  rtdf %>% filter(code == ck$code[2]) %>% 
+  group_by(MthDate) %>% 
+  ggplot(aes(x=MthDate,y=VPIN))+geom_line()+
+  labs(title = paste(ck$code[2],ck$name[2],"中公司"),x="日期")
+  rtdf %>% filter(code == ck$code[3]) %>% 
+  group_by(MthDate) %>% 
+  ggplot(aes(x=MthDate,y=VPIN))+geom_line()+
+  labs(title = paste(ck$code[3],ck$name[3],"小公司"),x="日期")
+```
+
+### 回歸
+```{r}
+model <- rtdf%>%na.omit()%>% lm(data=., VPIN ~ami+bdd+rt)
+summary(model)
+```
+
