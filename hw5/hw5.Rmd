@@ -1,0 +1,296 @@
+---
+title: "2020微結構HW5"
+author: "kidneyweakx"
+date: "`r Sys.time()`"
+output:
+  html_document:
+    highlight: pygments
+    theme: flatly
+    css: ../style.css
+  word_document: default
+subtitle: 迴歸分析
+---
+
+### 下載packages
+```{r results='hide', message=FALSE, warning=FALSE, echo=F}
+rm(list=ls(all=T))
+knitr::opts_chunk$set(comment = NA)
+if(!require(pacman)) install.packages("pacman")
+pacman::p_load(tidyverse,data.table,lubridate)
+```
+
+### 讀取公司規模資料並抽樣
+> 公司規模大小定義
+
++ 大型公司:股本50億以上
++ 中型公司:10-50億
++ 小型公司:10億以下
+```{r}
+# 公司規模 CSV
+c_scale <- read.csv("../data/公司規模.csv", header = TRUE, 
+                    sep=",",stringsAsFactors = FALSE) %>% as_tibble()
+mth_all <-  dir("../data/成交檔")
+mth_0103 <- dir(paste0("../data/成交檔/", mth_all[1])) %>% substr(1,4)
+mth_0406 <- dir(paste0("../data/成交檔/", mth_all[2])) %>% substr(1,4)
+mth_0709 <- dir(paste0("../data/成交檔/", mth_all[3])) %>% substr(1,4)
+mth_1012 <- dir(paste0("../data/成交檔/", mth_all[4])) %>% substr(1,4)
+odr_all <-  dir("../data/委託檔/") %>% 
+  substr(1,4)
+# 抽樣50家公司(大中小各15)
+set.seed(111)
+c_sample <- c_scale %>% 
+  filter( code %in% mth_0103 & code %in%mth_0406 & 
+            code %in% mth_0709 &  code %in% mth_1012, 
+          firm_size =="big") %>% 
+  sample_n(50)
+# c_sample[c_sample$code==2007,] <- filter(c_scale,code == 2347)
+c_sample[c_sample$code==3682,] <- filter(c_scale,code == 2890)
+c_sample <- c_sample %>% arrange(code)
+print(c_sample, n = 50)
+```
+
+### 時間間隔
+```{r}
+# 建立時間區間間隔
+Dtime <- c(0,9000000,9150000,9300000,9450000,9600000,
+  10150000,10300000,10450000,10600000,
+  11150000,11300000,11450000,11600000,
+  12150000,12300000,12450000,12600000,
+  13150000,13300000,14300000)
+```
+
+```{r}
+Afuntion <- function(xy){
+  # 讀取成交檔
+  company = toString(c_sample$code[xy])
+  print(company)
+  Season <- c("01_03","04_06","07_09","10_12")
+  # 讀取4季成交檔
+  Mth <- do.call(rbind,lapply(1:4,function(i){
+   fread(paste0("../data/成交檔/2018",Season[i],"/",company, "mth",Season[i],".csv"),
+         data.table = F, encoding = 'UTF-8')
+ }))
+  # 加入label
+  Rt <- Mth %>% arrange(MthDate, MthTime) %>% 
+    group_by(MthDate) %>% 
+    mutate(MthShr = MthShr/1000,
+      label= findInterval(MthTime,Dtime)-1,
+           sumVol = sum(MthShr), 
+           rt = log(MthPr)-log(lag(MthPr)),lastPr = last(MthPr),
+           rstd = sd(rt, na.rm=TRUE),isI = ifelse(InvestType == "I",1,0),
+           PropI = sum(isI)/n())  %>%  
+    group_by(MthDate, label) %>%
+    mutate(bdd = mean(rstd),
+           ami = abs(mean(rt,na.rm = TRUE))/mean(MthShr,na.rm = TRUE),
+           ) %>%
+    ungroup() %>% 
+    group_by(MthDate,InvestType)%>% summarise(lastPr =  mean(lastPr),
+                                              Volatility = quantile(bdd),
+                                              amihud = quantile(bdd),
+                                             sumVol = sum(MthShr),
+                                             PropI = mean(PropI)) 
+  A <- Rt %>% ungroup() %>% 
+    select(.,c(MthDate,lastPr)) %>% 
+    group_by(MthDate) %>%
+    summarise(lastPr = mean(lastPr)) %>%
+    mutate(lagPr= lag(lastPr),DeltaPr = lastPr-lagPr,
+           IntraDayRet = DeltaPr/lagPr,
+           WeekRet = IntraDayRet+lag(IntraDayRet)+lag(IntraDayRet,2)+
+                         lag(IntraDayRet,3)+lag(IntraDayRet,4),
+           VR = WeekRet/(5*IntraDayRet))
+  Rt <-  left_join(Rt,A)
+  Rt <- Rt %>% mutate(Z=ifelse(DeltaPr,DeltaPr/sum(DeltaPr,na.rm = T),0))
+  Rt <- Rt %>% mutate(BuyVol = sumVol*Z,
+                      SellVol = sumVol*(1-Z),
+                      OdrImb =   abs(BuyVol-SellVol),
+                      code=c_sample$code[xy],
+                      MthDate = ymd(MthDate))
+  return(Rt)
+}
+```
+
+```{r}
+TEJ <- fread("../data/HW5.csv",data.table = F,encoding = "UTF-8")
+TEJ <- TEJ[,c(1,2,3,5)]
+colnames(TEJ) <- c("code","MthDate","Buy","Sell")
+TEJ$Buy <- TEJ$Buy %>% as.numeric()
+TEJ$Sell <- TEJ$Sell %>% as.numeric()
+TEJ[is.na(TEJ)] <- 0
+TEJ$code <- str_extract(TEJ$code, "[0-9]+") %>% as.integer()
+TEJ <- TEJ %>% mutate(TOFV = (Buy+Sell),MthDate = ymd(TEJ$MthDate))
+TEJ <- TEJ %>% select(MthDate,code,TOFV)
+```
+
+### 挑選公司(a台積電, b台塑, c富邦金)
+```{r}
+a <- Afuntion(13) # 台積電
+b <-Afuntion(3) # 台塑
+c <-Afuntion(30)# 富邦金
+```
+
+```{r}
+# 2330
+a %>% na.omit() %>%
+  ggplot( aes(x=MthDate, y=OdrImb , group=InvestType, color=InvestType)) +
+    geom_line() + 
+  labs(title = paste(c_sample$name[13],c_sample$code[13],                                   
+                     "order imbalance of institutional trading"))
+a %>% na.omit() %>%
+  ggplot( aes(x=MthDate, y=PropI)) +
+    geom_line() + 
+  labs(title = paste(c_sample$name[13],c_sample$code[13],                                   
+                     "daily propotion"))
+
+# 1301
+b %>% na.omit()%>%
+  ggplot( aes(x=MthDate, y=OdrImb , group=InvestType, color=InvestType)) +
+    geom_line() + 
+    labs(title = paste(c_sample$name[3],c_sample$code[3],
+                                      "order imbalance of institutional trading"))
+b %>% na.omit() %>%
+  ggplot( aes(x=MthDate, y=PropI)) +
+    geom_line() + 
+    labs(title = paste(c_sample$name[3],c_sample$code[3],                                   
+                     "daily propotion"))
+
+# 2881
+c %>% na.omit()%>%
+  ggplot( aes(x=MthDate, y=OdrImb , group=InvestType, color=InvestType)) +
+    geom_line() + 
+    labs(title = paste(c_sample$name[30],c_sample$code[30],
+                                      "order imbalance of institutional trading"))
+c %>% na.omit()%>%
+  ggplot( aes(x=MthDate, y=PropI)) +
+    geom_line() + 
+    labs(title = paste(c_sample$name[30],c_sample$code[30],                                   
+                     "daily propotion"))
+```
+
+
+### 第二題
+```{r}
+a <- left_join(a,TEJ)
+b <- left_join(b,TEJ)
+c <- left_join(c,TEJ)
+acf(a[a$InvestType=="F",]$TOFV, na.action=na.omit)
+acf(a[a$InvestType=="F",]$OdrImb, na.action=na.omit)
+acf(a[a$InvestType=="I",]$TOFV, na.action=na.omit)
+acf(a[a$InvestType=="I",]$OdrImb, na.action=na.omit)
+cor.test(a$OdrImb,a$TOFV)
+acf(b[b$InvestType=="F",]$TOFV, na.action=na.omit)
+acf(b[b$InvestType=="F",]$OdrImb, na.action=na.omit)
+acf(b[b$InvestType=="I",]$TOFV, na.action=na.omit)
+acf(b[b$InvestType=="I",]$OdrImb, na.action=na.omit)
+cor.test(b$OdrImb,b$TOFV)
+acf(c[c$InvestType=="F",]$TOFV, na.action=na.omit)
+acf(c[c$InvestType=="F",]$OdrImb, na.action=na.omit)
+acf(c[c$InvestType=="I",]$TOFV, na.action=na.omit)
+acf(c[c$InvestType=="I",]$OdrImb, na.action=na.omit)
+cor.test(c$OdrImb,c$TOFV)
+```
+
+### 第三題
+```{r}
+mod <- lm(a$OdrImb~a$PropI+a$lastPr+a$lagPr)
+summary(mod)
+mod2 <- lm(a$TOFV~a$PropI+a$lastPr+a$lagPr)
+summary(mod2)
+mod <- lm(b$OdrImb~b$PropI+b$lastPr+b$lagPr)
+summary(mod)
+mod2 <- lm(b$TOFV~b$PropI+b$lastPr+b$lagPr)
+summary(mod2)
+mod <- lm(c$OdrImb~c$PropI+c$lastPr+c$lagPr)
+summary(mod)
+mod2 <- lm(c$TOFV~c$PropI+c$lastPr+c$lagPr)
+summary(mod2)
+```
+
+### 第四題
+```{r}
+a <- a%>%na.omit()
+summary(a$VR)
+a$VR[a$VR==Inf] <- quantile(a$VR, 0.75)
+a$VR[a$VR==-Inf] <- quantile(a$VR, 0.25)
+mod <- lm(a$OdrImb~a$VR,na.action = na.omit)
+summary(mod)
+mod2 <- lm(a$TOFV~a$VR,na.action = na.omit)
+summary(mod2)
+
+b <- b %>% na.omit()
+summary(b$VR)
+b$VR[b$VR==Inf] <- quantile(b$VR, 0.75)
+b$VR[b$VR==-Inf] <- quantile(b$VR, 0.25)
+mod <- lm(b$OdrImb~b$VR,na.action = na.omit)
+summary(mod)
+mod2 <- lm(b$TOFV~b$VR,na.action = na.omit)
+summary(mod2)
+
+c <- c %>% na.omit()
+summary(c$VR)
+c$VR[c$VR==Inf] <- quantile(c$VR, 0.75)
+c$VR[c$VR==-Inf] <- quantile(c$VR, 0.25)
+mod <- lm(c$OdrImb~c$VR,na.action = na.omit)
+summary(mod)
+mod2 <- lm(c$TOFV~c$VR,na.action = na.omit)
+summary(mod2)
+```
+
+### 第五題
+```{r}
+# A
+a_notI <- a %>% filter(InvestType != "I") %>% ungroup() %>% 
+  group_by(MthDate) %>% 
+  summarise(OIB = sum(OdrImb))%>%
+  mutate( LagOTB =lag(OIB))
+a_I <- a %>% filter(InvestType == "I") %>% ungroup() %>% 
+  group_by(MthDate) %>% 
+  summarise(Retail = sum(OdrImb))
+a_OIB <- left_join(a_I,a_notI)
+m <- lm(a_OIB$Retail~a_OIB$LagOTB)
+summary(a_OIB)
+summary(m)
+# B
+a_notI <- b %>% filter(InvestType != "I") %>% ungroup() %>% group_by(MthDate) %>% summarise(OIB = sum(OdrImb))%>%
+  mutate( LagOTB =lag(OIB))
+a_I <- b %>% filter(InvestType == "I") %>% ungroup() %>% group_by(MthDate) %>% summarise(Retail = sum(OdrImb))
+a_OIB <- left_join(a_I,a_notI)
+m <- lm(a_OIB$Retail~a_OIB$LagOTB)
+summary(a_OIB)
+summary(m)
+# C
+a_notI <- c %>% filter(InvestType != "I") %>% ungroup() %>% group_by(MthDate) %>% summarise(OIB = sum(OdrImb))%>%
+  mutate( LagOTB =lag(OIB))
+a_I <- c %>% filter(InvestType == "I") %>% ungroup() %>% group_by(MthDate) %>% summarise(Retail = sum(OdrImb))
+a_OIB <- left_join(a_I,a_notI)
+m <- lm(a_OIB$Retail~a_OIB$LagOTB)
+summary(a_OIB)
+summary(m)
+```
+
+### 第六題
+```{r}
+summary(a$Volatility)
+summary(b$Volatility)
+summary(c$Volatility)
+
+cat("Order flows", mean(a$OdrImb),"return", mean(a$Volatility))
+cat("Order flows", mean(b$OdrImb),"return", mean(b$Volatility))
+cat("Order flows", mean(c$OdrImb),"return", mean(c$Volatility))
+### 波動度:b台塑 > a台積電 > c富邦金
+model <- lm(a$OdrImb~a$Volatility+a$amihud)
+summary(model)# amihud 跟 波動度有共線性
+
+modelb <- lm(b$OdrImb~b$Volatility)
+summary(modelb)
+
+modelc <- lm(c$OdrImb~c$Volatility)
+summary(modelc)
+
+```
+
+
+
+
+
+
+
