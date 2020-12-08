@@ -6,4 +6,3 @@
 *.xlsx
 *.docx
 .env
-contest/max/*
