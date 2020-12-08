@@ -1,0 +1,231 @@
+---
+title: "Quantstart 測試"
+author: "kidneyweakx"
+date: "`r Sys.time()`"
+output:
+  html_document:
+    highlight: pygments
+    theme: flatly
+    css: ../style.css
+---
+```{r include=FALSE}
+rm(list=ls(all=T));gc()
+if(!require(tidyverse)) install.packages("tidyverse")
+if(!require(tidyquant)) install.packages("tidyquant")
+if(!require(reticulate)) install.packages("reticulate")
+if(!require(quantstrat)) {
+  install.packages("devtools") # if not installed
+  install.packages("FinancialInstrument") #if not installed
+  install.packages("PerformanceAnalytics") #if not installed
+  # next install blotter from GitHub
+  devtools::install_github("braverock/blotter")
+  # next install quantstrat from GitHub
+  devtools::install_github("braverock/quantstrat")
+}
+if(!require(IKTrading)) {
+  if(!require(devtools)) install.packages("devtools") 
+  devtools::install_github("IlyaKipnis/IKTrading")
+}
+if(!require(doParallel)) install.packages("doParallel")
+# python anaconda 位置 (修改cloud成你的環境，conda為ana/miniconda路徑)
+use_condaenv("cloud",conda = "D:\\app\\Anaconda3\\condabin\\conda") 
+```
+
+
+### [資料來源max.maicoin.com/documents/api_list](https://max.maicoin.com/documents/api_list)
+
+> 加入API方法 [Python API](https://github.com/kulisu/max-exchange-api-python3)
+
++ 使用`git clone https://github.com/kulisu/max-exchange-api-python3` 到本地
++ 將max資料夾放置在該Rmd旁
++ `file.edit(path.expand(file.path("~", ".Renviron")))`
++ 加入環境變數範例: `MAX_API_KEY="yourkey"`
++ 加入後**重新開啟** Rstudio
+
+```{r}
+# 加入 API (reticulate Python module)
+max <- import("max.client") # Python方法
+client <- max$Client(Sys.getenv("MAX_API_KEY"),Sys.getenv("MAX_API_SECRET"))
+```
+
+### Python data轉換dataframe
++ 有時候會失效(需要運用apply處理)
+
+```{r}
+# 要到的data轉換成dataframe
+r2df <- function(l){
+  data.frame(matrix(unlist(l), nrow=length(l), byrow=T),
+                 stringsAsFactors=FALSE)}
+```
+
+### 繪製簡易K線
+
+```{r}
+trange <- function(x){(Sys.time() - x) %>% as.numeric() %>% round()}
+market <- client$get_public_all_markets() %>% r2df %>% 
+  filter(X6 == "usdt") 
+```
+
+```{r}
+limit <- 10000; period <- c(1,5,15,30,60,120,240,360,720,1440) # 時間 (分鐘)
+# 需加入時間
+k <-  client$get_public_k_line(market$X1[1], 
+                               toString(limit), 
+                               toString(period[3]),
+                               toString(trange(days(90)))) %>%  r2df()
+colnames(k) <- c("date", "open", "high", "low", "close", "volume")
+```
+
+```{r}
+stockData <- k %>% mutate(date=as_datetime(date))
+stockData <- xts(stockData[,-1], order.by = stockData$date)
+chartSeries(stockData)
+```
+### 策略設定
+```{r}
+# rm(list = ls(.blotter), envir = .blotter)
+startDate = "2020-10-01"
+endDate = "2020-11-29"
+
+currency("USD")
+Sys.setenv(TZ = "UTC")
+symbols <- "stockData"
+stock(symbols, currency = "USD", multiplier = 1)
+```
+
+###  strategy
+```{r}
+rm.strat("BollingerBandsStrat")
+currency('USD')
+stock(symbols, currency = 'USD', multiplier = 1)
+
+init_date = as.Date(startDate) - 1
+init_equity = 1000
+portfolio.st <- 'BollingerBandsStrat'
+account.st <- 'BollingerBandsStrat'
+initPortf(portfolio.st,
+          symbols = symbols,
+          initDate = init_date)
+
+initAcct(account.st,
+         portfolios = 'BollingerBandsStrat',
+         initDate = init_date)
+
+initOrders(portfolio = portfolio.st,
+           initDate = init_date)
+BBands_Strategy <- strategy("BollingerBandsStrat")
+```
+
+```{r}
+# Add indicators
+BBands_Strategy <- add.indicator(
+  strategy = BBands_Strategy,
+  name = "BBands",
+  arguments = list(
+    HLC = quote(HLC(mktdata)),
+    maType = 'SMA'),
+  label = 'BollingerBands_Label')
+```
+
+```{r}
+# Add Signals
+
+BBands_Strategy <- add.signal(
+  BBands_Strategy, 
+  name = "sigCrossover",
+  arguments = list(
+    columns = c("Close","up"),
+    relationship = "gt"),
+  label = "Close.gt.UpperBBand")
+
+BBands_Strategy <- add.signal(
+  BBands_Strategy,
+  name = "sigCrossover",
+  arguments = list(
+    columns = c("Close","dn"),
+    relationship = "lt"),
+  label = "Close.lt.LowerBBand")
+
+BBands_Strategy <- add.signal(
+  BBands_Strategy,
+  name = "sigCrossover",
+  arguments = list(
+    columns = c("High","Low","mavg"),
+    relationship = "op"),
+  label = "Cross.MiddleBBand")
+```
+
+```{r}
+# Add rules
+
+BBands_Strategy <- add.rule(
+  BBands_Strategy,
+  name = 'ruleSignal',
+  arguments = list(
+    sigcol = "Close.gt.UpperBBand", 
+    sigval = TRUE, 
+    orderqty = -100, 
+    ordertype = 'market',
+    orderside = NULL,
+    threshold = NULL),
+  type = 'enter')
+
+BBands_Strategy <- add.rule(
+  BBands_Strategy, 
+  name = 'ruleSignal',
+  arguments = list(
+    sigcol = "Close.lt.LowerBBand",
+    sigval = TRUE,
+    orderqty = 100,
+    ordertype = 'market',
+    orderside = NULL,
+    threshold = NULL),
+  type = 'enter')
+
+BBands_Strategy <- add.rule(
+  BBands_Strategy,
+  name = 'ruleSignal',
+  arguments = list(
+    sigcol = "Cross.MiddleBBand",
+    sigval = TRUE,
+    orderqty = 'all',
+    ordertype = 'market',
+    orderside = NULL,
+    threshold = NULL),
+  type = 'exit')
+```
+
+```{r}
+out <- applyStrategy(
+  strategy = BBands_Strategy,
+  portfolios = 'BollingerBandsStrat',
+  parameters = list( 
+    sd = 1.6, # number of standard deviations
+    n = 20) # MA periods
+  )
+
+updatePortf(Portfolio = 'BollingerBandsStrat', Dates = paste('::',as.Date(Sys.time()),sep=''))
+```
+
+```{r}
+tradeStats(portfolio.st) %>% 
+  tibble::rownames_to_column("ticker") %>%
+  t() %>% 
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+```
+
+```{r}
+for(sym in symbols){
+  chart.Posn(Portfolio = 'BollingerBandsStrat', Symbol = sym)
+  plot(add_BBands(on = 1, sd = 1.6, n = 20))
+  
+  perf <- tradeStats(portfolio.st) %>% 
+    tibble::rownames_to_column("ticker") %>% 
+    filter(ticker == sym) %>% 
+    t() %>% 
+    kable() %>%
+    kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+}
+```
+

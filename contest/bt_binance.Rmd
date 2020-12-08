@@ -1,0 +1,107 @@
+---
+title: "MAX Exchange 參照交易所交易"
+author: "kidneyweakx"
+date: "`r Sys.time()`"
+output:
+  html_document:
+    highlight: pygments
+    theme: flatly
+    css: ../style.css
+---
+```{r include=FALSE}
+rm(list=ls(all=T));gc()
+if(!require(pacman)) install.packages("pacman")
+pacman::p_load(tidyverse,tidyquant, reticulate)
+if(!require(binancer)) {
+  if(!require(devtools)) install.packages("devtools")
+  devtools::install_github("daroczig/binancer")
+}
+# python anaconda 位置 (修改cloud成你的環境，conda為ana/miniconda路徑)
+use_condaenv("cloud",conda = "D:\\app\\Anaconda3\\condabin\\conda") 
+```
+
+### [資料來源max.maicoin.com/documents/api_list](https://max.maicoin.com/documents/api_list)
+
+> 加入API方法 [Python API](https://github.com/kulisu/max-exchange-api-python3)
+
++ 使用`git clone https://github.com/kulisu/max-exchange-api-python3` 到本地
++ 將max資料夾放置在該Rmd旁
++ `file.edit(path.expand(file.path("~", ".Renviron")))`
++ 加入環境變數範例: `MAX_API_KEY="yourkey"`
++ 加入後**重新開啟** Rstudio
+
+```{r}
+# 加入 API (reticulate Python module)
+max <- import("max.client") # Python方法
+client <- max$Client(Sys.getenv("MAX_API_KEY"),Sys.getenv("MAX_API_SECRET"))
+```
+
+```{r}
+# 要到的data轉換成dataframe
+r2df <- function(l){
+  data.frame(matrix(unlist(l), nrow=length(l), byrow=T),
+                 stringsAsFactors=FALSE)}
+```
+
+### 繪製簡易K線
+
+```{r}
+# trange <- function(x){(Sys.time() - x) %>% as.numeric() %>% round()}
+market <- client$get_public_all_markets() %>% r2df %>% 
+  filter(X6 == "usdt") 
+```
+
+```{r}
+market <- 'BCHUSDT'; limit <- 1000; period <- 1
+# 需加入時間
+k <-  client$get_public_k_line(tolower(market), 
+                               toString(limit), 
+                               toString(period[1])) %>%  r2df()
+colnames(k) <- c("date", "open", "high", "low", "close", "volume")
+B <- binance_klines(toupper(market), paste0(period,'m'),limit = limit)
+k <- k %>% mutate(date=as_datetime(date))
+```
+
+```{r}
+B2 <- B[,c(1:6)]
+colnames(B2) <- c("date","bopen","bhigh","blow","bclose","bvolume")
+BK <- left_join(k,B2,by="date")
+```
+
+```{r}
+buyCostR <- 0.0015   # 買入交易成本 
+sellCostR <- 0.0005 # 賣出交易成本
+BK <- BK %>% mutate(rets = bclose - (close*1.002)) 
+trade <- BK %>% filter(rets > 0) %>% 
+  mutate(ret=bclose*(1-sellCostR)/(close*(1+buyCostR))-1,)
+```
+
+```{r}
+guess <- BK %>% mutate(fc=lead(close)-close,
+                       bfc=lead(bclose)-bclose,
+                       bmfc=lead(bclose)-close)
+win <- (guess %>% select(fc, bmfc) %>% 
+  filter((fc>0&bmfc>0)) %>% 
+  nrow() + guess %>% select(fc, bmfc) %>% 
+    filter((fc<0&bmfc<0)) %>% nrow())/1000
+```
+
+
+```{r}
+meanRet <- mean(trade$ret) # 平均報酬率
+sdRet <- sd(trade$ret) # 報酬率標準差
+tradeNums <- nrow(trade) # 交易次數
+winRatio <- sum(as.numeric(trade$ret>0))/tradeNums # 勝率
+maxRet <- max(trade$ret) # 最大報酬率
+minRet <- min(trade$ret) # 最小報酬率
+
+# 列印出回測績效
+cat(paste0("*********策略回測績效*********\n",
+           "平均報酬率: ",round(meanRet*100,2)," %\n",
+           "交易次數: ",tradeNums," 次\n",
+           "勝率: ",round(win*100,2)," %\n",
+           "報酬率標準差: ",round(sdRet*100,2)," %\n",
+           "最大報酬率: ",round(maxRet*100,2)," %\n",
+           "最小報酬率: ",round(minRet*100,2)))
+```
+

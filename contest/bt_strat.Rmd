@@ -1,0 +1,249 @@
+---
+title: "MAX Exchange 競賽回測"
+author: "kidneyweakx"
+date: "`r Sys.time()`"
+output:
+  html_document:
+    highlight: pygments
+    theme: flatly
+    css: ../style.css
+---
+```{r include=FALSE}
+rm(list=ls(all=T));gc()
+if(!require(pacman)) install.packages("pacman")
+pacman::p_load(tidyverse,tidyquant, reticulate)
+# python anaconda 位置 (修改cloud成你的環境，conda為ana/miniconda路徑)
+use_condaenv("cloud",conda = "D:\\app\\Anaconda3\\condabin\\conda") 
+```
+
+### [資料來源max.maicoin.com/documents/api_list](https://max.maicoin.com/documents/api_list)
+
+> 加入API方法 [Python API](https://github.com/kulisu/max-exchange-api-python3)
+
++ 使用`git clone https://github.com/kulisu/max-exchange-api-python3` 到本地
++ 將max資料夾放置在該Rmd旁
++ `file.edit(path.expand(file.path("~", ".Renviron")))`
++ 加入環境變數範例: `MAX_API_KEY="yourkey"`
++ 加入後**重新開啟** Rstudio
+
+
+```{r}
+# 加入 API (reticulate Python module)
+max <- import("max.client") # Python方法
+client <- max$Client(Sys.getenv("MAX_API_KEY"),Sys.getenv("MAX_API_SECRET"))
+```
+
+### Python data轉換dataframe
++ 有時候會失效(需要運用apply處理)
+
+```{r}
+# 要到的data轉換成dataframe
+r2df <- function(l){
+  data.frame(matrix(unlist(l), nrow=length(l), byrow=T),
+                 stringsAsFactors=FALSE)}
+```
+
+### 繪製簡易K線
+
+```{r}
+trange <- function(x){(Sys.time() - x) %>% as.numeric() %>% round()}
+market <- client$get_public_all_markets() %>% r2df %>% 
+  filter(X6 == "usdt") 
+# getk <- function(market="btctwd",limit="10000",period=1, range=""){
+#   k <- client$get_public_k_line(market, limit, period, range) %>%  r2df()
+# colnames(k) <- c("date", "open", "high", "low", "close", "volume")
+# return(k)
+# }
+```
+
+```{r}
+limit <- 10000; period <- c(1,5,15,30,60,120,240,360,720,1440) # 時間 (分鐘)
+market <- market$X1
+# 需加入時間
+k <-  client$get_public_k_line(market[2], 
+                               toString(limit), 
+                               toString(period[2]),
+                               toString(trange(days(60)))) %>%  r2df()
+colnames(k) <- c("date", "open", "high", "low", "close", "volume")
+```
+
+
+```{r}
+stockData <- k %>% mutate(date=as_datetime(date)) 
+stockData <- stockData %>%
+  # tq_mutate(select = close, mutate_fun = BBands, n=26, sd=2) %>% 
+  # tq_mutate(select = close, mutate_fun = MACD) %>% 
+  # tq_mutate(select = close, mutate_fun = momentum, n =20) %>% 
+  tq_mutate(select = c(close,high,low), mutate_fun = ATR)
+
+```
+
+### 進場策略
+
+```{r}
+# 雙MA策略 (MA-Cross)
+inSiteTable <- stockData %>%
+  mutate(MAF=SMA(close, 30),
+         MAS=SMA(close, 60),
+         MA120 = SMA(close, 120)) %>%
+  filter(MA120<= close,open<close,open>MA120) %>%
+  select(inDate=date, buyPrice=close)
+
+# 布林通道策略 (BBands)
+# inSiteTable <- stockData %>%
+#   filter(lag(dn) > lag(close) & dn  <=  close |  # 下往上穿越下線：可能短期會反轉
+#          lag(mavg) > lag(close) & mavg <= close  #下往上穿越中線：可能會加速向上
+#              ) %>%
+#   select(inDate=date, buyPrice=close)
+
+# MACD
+# inSiteTable <- stockData %>%
+#   filter(macd>0,
+#          signal>0,
+#          macd<signal,
+#          lag(macd)>lag(signal)) %>%
+#   select(inDate=date, buyPrice=close)
+
+# momentum
+# inSiteTable <- stockData %>%
+#   filter(momentum>0,
+#          lag(momentum)<0) %>%
+#   select(inDate=date, buyPrice=close)
+
+# R-breaker
+# inSiteTable <- stockData %>%
+#   mutate(lhigh=lag(high),llow=lag(low),lclose=lag(close),
+#          pivot = (lhigh + llow + lclose)/3,
+#          bBreak = lhigh + 2 * (pivot - llow),
+#          bEnter = 2 * pivot - lhigh,
+#          bSetup = pivot - (lhigh - llow)) %>%
+#   filter(close>bBreak)%>%
+#   select(inDate=date, buyPrice=close)
+
+
+# inSiteTable <- stockData %>% mutate(datet = date(date)) %>%
+#   group_by(datet) %>% 
+#   mutate(mhigh=mean(high,rm.na=T) ,
+#          mlow=mean(low,rm.na=T) ,
+#          mclose=mean(close,rm.na=T),
+#          lhigh=lag(mhigh,288),
+#          llow=lag(mlow,288),
+#          lclose=lag(mclose,288),
+#          HH = max(lhigh,rm.na=T),HC=max(lclose,rm.na=T),
+#          LC = min(lclose,rm.na=T),LL=min(llow,rm.na=T)) %>% 
+#   ungroup()
+
+```
+
+```{r}
+# 雙MA策略
+outSiteTable <- stockData %>%
+  mutate(MAF= SMA(close, 5),
+         MAS= SMA(close, 15)) %>%
+  filter(MAF<=MAS,lag(MAF)>lag(MAS)) %>%
+  select(outDate=date, sellPrice=close)
+
+# 布林通道
+# outSiteTable <- stockData %>%
+#   filter(lag(up) < lag(close) & up >= close |# 上往下跌破上線：暗示上漲趨勢結束
+#            lag(mavg) < lag(close) & mavg >= close# 由上往下跌破中線：可能會下跌
+#            ) %>%
+#   select(outDate=date, sellPrice=close)
+
+# MACD
+# outSiteTable <- stockData %>%
+#   mutate(MA10=SMA(close, 10),
+#          lagMA10=lag(MA10,1)) %>%
+#   filter(macd<0,
+#          signal<0,
+#          macd>signal,
+#          lag(macd)<lag(signal),
+#          close>MA10) %>%
+#   select(outDate=date, sellPrice=close)
+
+
+# momentum
+# outSiteTable <- stockData %>%
+#   filter(momentum<0,
+#          lag(momentum)>0) %>%
+#   select(outDate=date, sellPrice=close)
+# R-breaker
+# outSiteTable <- stockData %>% 
+#   mutate(lhigh=lag(high),llow=lag(low),lclose=lag(close),
+#          pivot = (lhigh + llow + lclose)/3,
+#          sSetup = pivot + (lhigh - llow),
+#          sEnter = 2 * pivot - llow,
+#          sBreak = llow - 2 * (lhigh - pivot)) %>% 
+#   filter(close< sEnter) %>%
+#   select(outDate=date, sellPrice=close)
+
+# Dual Thrust
+# outSiteTable <- stockData %>%
+#   mutate(lhigh=lag(high),llow=lag(low),lclose=lag(close),
+#          HH = max(lhigh),HC=max(lclose),
+#          LC = min(lclose),LL=min(llow),
+#          range=max(HH-LC,HC-LL),
+#          buyline= open+range*0.2,
+#          sellline = open - range*0.2) %>%
+#   filter(close<sellline) %>%
+#   select(outDate=date, sellPrice=close)
+```
+
+```{r}
+tradeDetailTable <- NULL   
+
+for(ix in 1:nrow(inSiteTable)){
+  # 目前的進場日期
+  inDate <- inSiteTable$inDate[ix] 
+  # 找尋進場日期往後最近的出場位置
+  outSite <- which(outSiteTable$outDate>inDate)[1]  
+  # 防呆機制，如果進場日期在資料尾端，有可能發生資料不足找不到出場位置的狀況
+  if(length(outSite)>0){                            
+    # 將該筆進場資訊與對應的出場資訊合併，並儲存至交易明細表內
+    tradeDetailTable <- bind_rows(tradeDetailTable, 
+                                  bind_cols(inSiteTable[ix,],
+                                            outSiteTable[outSite,]))
+    outSiteTable <- outSiteTable[-outSite,]
+  }
+  
+}
+```
+
+```{r}
+# 手續費
+buyCostR <- 0.0015   # 買入交易成本 
+sellCostR <- 0.0015  # 賣出交易成本
+tradeDetailTable <- tradeDetailTable %>%
+  mutate(# 計算報酬率
+         ret=sellPrice*(1-sellCostR)/(buyPrice*(1+buyCostR))-1,
+         # 計算持有日數
+         holdtimes=difftime(outDate,inDate,units = "hours")) %>% na.omit()   
+```
+
+```{r}
+meanRet <- mean(tradeDetailTable$ret) # 平均報酬率
+sdRet <- sd(tradeDetailTable$ret) # 報酬率標準差
+tradeNums <- nrow(tradeDetailTable) # 交易次數
+winRatio <- sum(as.numeric(tradeDetailTable$ret>0))/tradeNums # 勝率
+maxRet <- max(tradeDetailTable$ret) # 最大報酬率
+minRet <- min(tradeDetailTable$ret) # 最小報酬率
+avgHoldtimes <- mean(tradeDetailTable$holdtimes) # 平均持有時間
+
+# 列印出回測績效
+cat(paste0("*********策略回測績效*********\n",
+           "平均報酬率: ",round(meanRet*100,2)," %\n",
+           "交易次數: ",tradeNums," 次\n",
+           "勝率: ",round(winRatio*100,2)," %\n",
+           "報酬率標準差: ",round(sdRet*100,2)," %\n",
+           "最大報酬率: ",round(maxRet*100,2)," %\n",
+           "最小報酬率: ",round(minRet*100,2)," %\n",
+           "平均持有間距: ",round(avgHoldtimes,2),"小時"))
+```
+
+### 交叉驗證
+```{r}
+his <- client$get_private_trade_history("ethusdt")
+his <- his %>% r2df()
+colnames(his) <- c("id","price","volume","funds","market","market_name","created_at","created_at_in_ms","side","fee","fee_currency","order_id")
+```
+

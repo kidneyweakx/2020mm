@@ -94,7 +94,8 @@ rtdf <- do.call(rbind, lapply(1:length(c_sample$code), function(xy){
            VPINd = mean(VPINlabel,na.rm = T),
            VPIN = ifelse(VPINd<1,VPINd,runif(1,0,0.3)))
   L <- Rt %>% group_by(MthDate) %>% 
-    summarise(ami=mean(ami,na.rm=T),
+    summarise(MthPr=mean(MthPr,na.rm=T),
+              ami=mean(ami,na.rm=T),
               bdd=mean(bdd,na.rm=T),
               rt=mean(rt,na.rm=T),
               code = c_sample$code[xy],
@@ -108,17 +109,24 @@ rtdf <- do.call(rbind, lapply(1:length(c_sample$code), function(xy){
 
 ```{r}
 print(ck)
-  rtdf %>% filter(code == ck$code[1]) %>% 
+```
+
+### 繪圖
+```{r}
+rtdf %>% filter(code == ck$code[1]) %>% 
   group_by(MthDate) %>% 
-  ggplot(aes(x=MthDate,y=VPIN))+geom_line()+
+  ggplot()+
+  geom_line(aes(x=MthDate,y=VPIN), col = "blue")
   labs(title = paste(ck$code[1],ck$name[1],"大公司"),x="日期")
-  rtdf %>% filter(code == ck$code[2]) %>% 
+rtdf %>% filter(code == ck$code[2]) %>% 
   group_by(MthDate) %>% 
-  ggplot(aes(x=MthDate,y=VPIN))+geom_line()+
+  ggplot()+
+  geom_line(aes(x=MthDate,y=VPIN), col = "blue") +
   labs(title = paste(ck$code[2],ck$name[2],"中公司"),x="日期")
-  rtdf %>% filter(code == ck$code[3]) %>% 
+rtdf %>% filter(code == ck$code[3]) %>% 
   group_by(MthDate) %>% 
-  ggplot(aes(x=MthDate,y=VPIN))+geom_line()+
+  ggplot()+ 
+  geom_line(aes(x=MthDate,y=VPIN), col = "blue") +
   labs(title = paste(ck$code[3],ck$name[3],"小公司"),x="日期")
 ```
 
