@@ -94,12 +94,12 @@ Afuntion <- function(xy){
     group_by(MthDate) %>%
     summarise(lastPr = mean(lastPr)) %>%
     mutate(lagPr= lag(lastPr),DeltaPr = lastPr-lagPr,
-           IntraDayRet = DeltaPr/lagPr,
+           IntraDayRet = ifelse(DeltaPr/lagPr!=0, DeltaPr/lagPr,NA),
            WeekRet = IntraDayRet+lag(IntraDayRet)+lag(IntraDayRet,2)+
                          lag(IntraDayRet,3)+lag(IntraDayRet,4),
            VR = WeekRet/(5*IntraDayRet))
   Rt <-  left_join(Rt,A)
-  Rt <- Rt %>% mutate(Z=ifelse(DeltaPr,DeltaPr/sum(DeltaPr,na.rm = T),0))
+  Rt <- Rt %>% mutate(Z=ifelse(DeltaPr,DeltaPr/sum(DeltaPr,na.rm = T),0.5))
   Rt <- Rt %>% mutate(BuyVol = sumVol*Z,
                       SellVol = sumVol*(1-Z),
                       OdrImb =   abs(BuyVol-SellVol),
@@ -117,16 +117,26 @@ TEJ$Buy <- TEJ$Buy %>% as.numeric()
 TEJ$Sell <- TEJ$Sell %>% as.numeric()
 TEJ[is.na(TEJ)] <- 0
 TEJ$code <- str_extract(TEJ$code, "[0-9]+") %>% as.integer()
-TEJ <- TEJ %>% mutate(TOFV = (Buy+Sell),MthDate = ymd(TEJ$MthDate))
-TEJ <- TEJ %>% select(MthDate,code,TOFV)
+TEJ <- TEJ %>% mutate(TOFV = (Buy+Sell),OrIB = (Buy-Sell),MthDate = ymd(TEJ$MthDate))
+TEJ <- TEJ %>% select(MthDate,code,TOFV,OrIB)
 ```
 
 ### 挑選公司(a台積電, b台塑, c富邦金)
+```{r}
+rtdf <- do.call(rbind, lapply(1:50,Afucntion(i)))
+```
+
 ```{r}
 a <- Afuntion(13) # 台積電
 b <-Afuntion(3) # 台塑
 c <-Afuntion(30)# 富邦金
 ```
+```{r}
+a <- left_join(a,TEJ)
+b <- left_join(b,TEJ)
+c <- left_join(c,TEJ)
+```
+
 
 ```{r}
 # 2330
@@ -169,9 +179,6 @@ c %>% na.omit()%>%
 
 ### 第二題
 ```{r}
-a <- left_join(a,TEJ)
-b <- left_join(b,TEJ)
-c <- left_join(c,TEJ)
 acf(a[a$InvestType=="F",]$TOFV, na.action=na.omit)
 acf(a[a$InvestType=="F",]$OdrImb, na.action=na.omit)
 acf(a[a$InvestType=="I",]$TOFV, na.action=na.omit)
@@ -207,10 +214,10 @@ summary(mod2)
 
 ### 第四題
 ```{r}
-a <- a%>%na.omit()
+a <- a %>% na.omit()
 summary(a$VR)
-a$VR[a$VR==Inf] <- quantile(a$VR, 0.75)
-a$VR[a$VR==-Inf] <- quantile(a$VR, 0.25)
+# a$VR[a$VR==Inf] <- quantile(a$VR, 0.75)
+# a$VR[a$VR==-Inf] <- quantile(a$VR, 0.25)
 mod <- lm(a$OdrImb~a$VR,na.action = na.omit)
 summary(mod)
 mod2 <- lm(a$TOFV~a$VR,na.action = na.omit)
@@ -273,9 +280,9 @@ summary(a$Volatility)
 summary(b$Volatility)
 summary(c$Volatility)
 
-cat("Order flows", mean(a$OdrImb),"return", mean(a$Volatility))
-cat("Order flows", mean(b$OdrImb),"return", mean(b$Volatility))
-cat("Order flows", mean(c$OdrImb),"return", mean(c$Volatility))
+cat("a.2003 Order flows", mean(a$OdrImb),"return", mean(a$Volatility),'\n')
+cat("b.1301 Order flows", mean(b$OdrImb),"return", mean(b$Volatility),'\n')
+cat("c.2881 Order flows", mean(c$OdrImb),"return", mean(c$Volatility),'\n')
 ### 波動度:b台塑 > a台積電 > c富邦金
 model <- lm(a$OdrImb~a$Volatility+a$amihud)
 summary(model)# amihud 跟 波動度有共線性

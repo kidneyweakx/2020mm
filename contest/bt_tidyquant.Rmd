@@ -63,7 +63,7 @@ market <- market$X1
 k <-  client$get_public_k_line(market[2], 
                                toString(limit), 
                                toString(period[2]),
-                               toString(trange(days(60)))) %>%  r2df()
+                               toString(trange(days(790)))) %>%  r2df()
 colnames(k) <- c("date", "open", "high", "low", "close", "volume")
 ```
 
@@ -71,9 +71,9 @@ colnames(k) <- c("date", "open", "high", "low", "close", "volume")
 ```{r}
 stockData <- k %>% mutate(date=as_datetime(date)) 
 stockData <- stockData %>%
-  # tq_mutate(select = close, mutate_fun = BBands, n=26, sd=2) %>% 
-  # tq_mutate(select = close, mutate_fun = MACD) %>% 
-  # tq_mutate(select = close, mutate_fun = momentum, n =20) %>% 
+  tq_mutate(select = close, mutate_fun = BBands, n=26, sd=2.5) %>%
+  tq_mutate(select = close, mutate_fun = MACD) %>%
+  tq_mutate(select = close, mutate_fun = momentum, n =20) %>%
   tq_mutate(select = c(close,high,low), mutate_fun = ATR)
 
 ```
@@ -90,11 +90,11 @@ inSiteTable <- stockData %>%
   select(inDate=date, buyPrice=close)
 
 # 布林通道策略 (BBands)
-# inSiteTable <- stockData %>%
-#   filter(lag(dn) > lag(close) & dn  <=  close |  # 下往上穿越下線：可能短期會反轉
-#          lag(mavg) > lag(close) & mavg <= close  #下往上穿越中線：可能會加速向上
-#              ) %>%
-#   select(inDate=date, buyPrice=close)
+inSiteTable <- stockData %>%
+  filter(lag(dn) > lag(close) & dn  <=  close |  # 下往上穿越下線：可能短期會反轉
+         lag(mavg) > lag(close) & mavg <= close  #下往上穿越中線：可能會加速向上
+             ) %>%
+  select(inDate=date, buyPrice=close)
 
 # MACD
 # inSiteTable <- stockData %>%

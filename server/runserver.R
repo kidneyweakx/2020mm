@@ -1,7 +1,8 @@
 rm(list=ls(all=T))
 if(!require(pacman)) install.packages("pacman")
 pacman::p_load(tidyverse, tidyquant, reticulate, telegram.bot)
-setwd("C://Users//kidneyweak//Workspace//R//2020mm//contest//")
+setwd("D://workspace//R//Course//2020mm//contest//")
+use_condaenv("cloud",conda = "D:\\app\\Anaconda3\\condabin\\conda")
 ## ===============================================================
 # Setting Telegram Bot
 ## file.edit(path.expand(file.path("~", ".Renviron")))
@@ -17,40 +18,40 @@ sendpic <- function(path="./tmp.png"){
   bot$sendPhoto(Sys.getenv("TG_GROUP_ID"),
                 photo = path
   )}
+
 ## ===============================================================
-# Setting MAX trading Robot
-## python anaconda location
-use_condaenv("cloud",conda = "C:\\Users\\kidneyweak\\anaconda3\\condabin\\conda")
+# Setting MAX trading function
 ## MAX API(Python)
 max <- import("max.client")
-clientx <- max$Client("","")
 client <- max$Client(Sys.getenv("MAX_API_KEY"),Sys.getenv("MAX_API_SECRET"))
 ## get kbound from max
-market <- 'btctwd'; limit <- 1000; # make it bigger that it not limit
-period <- c(1,5,15,30,60,120,240,360,720,1440,4320,10080) # 時間 (分鐘)
-r2df <- function(l){
+r2df <- function(l) {
   data.frame(matrix(unlist(l), nrow=length(l), byrow=T),
-             stringsAsFactors=FALSE)}
-## ===============================================================
-getk <- function(market,time=5, limit){
-  k <- clientx$get_public_k_line(market, 
+             stringsAsFactors=FALSE) }
+## get kline
+getk <- function(market,time=5, limit=1000){
+  k <- client$get_public_k_line(market, 
                                 toString(limit), 
                                 toString(time)) %>%  r2df()
   colnames(k) <- c("date", "open", "high", "low", "close", "volume")
   df <- k %>% mutate(date=as_datetime(date)) 
   return(df)
 }
+
 ## =============買入設定=============
 market = "ethusdt"; spendusdt = 10 # 花費USDT量
-ms="usdt";mb="eth";hold = 0
+ms="usdt"; mb="eth"; hold = 0 # 是否持有
 # amount = spendusdt / ticker # 算出amount
 ## ==================================
-sendmsg()
+
+sendmsg() # 開始執行
 ticker = client$get_public_all_tickers()[[tolower(market)]]$buy %>% as.numeric()
-ticker = ticker*2
+# ticker = ticker * 2
 while(1){
-  tryCatch(k <- getk(market,5,1000),error = function(e) {
-    k <- k[,1:6]; sendmsg("getK error!!!!")})
+  tryCatch(k <- getk(market,5,1000), error = function(e) {
+     Sys.sleep(2); tryCatch(k <- getk(market,5,1000), error = function(e) {
+      sendmsg(paste("[警示]server error!\n",e)); break })
+    })
   k <- k %>% tq_mutate(select = c(close),
                        mutate_fun = SMA,
                        n = 10) %>%
@@ -68,10 +69,19 @@ while(1){
     print("進場")
     # 進場
     # ==========交易============
-    ticker = client$get_public_all_tickers()[[tolower(market)]]$buy %>% as.numeric()
+    tryCatch(ticker <-  client$get_public_all_tickers()[[tolower(market)]]$buy %>% as.numeric(), error = function(e) {
+      Sys.sleep(1); tryCatch(ticker <-  client$get_public_all_tickers()[[tolower(market)]]$buy %>% as.numeric(), 
+                        error = function(e) {
+                          sendmsg(paste("[警示]server error!\n",e)); break
+                        })
+             })
     amount = spendusdt / ticker
-    trade <- client$set_private_create_order(toString(market),'buy', toString(amount), toString(ticker))
-    hold = 1
+    Sys.sleep(0.5);
+    tryCatch( trade <- client$set_private_create_order(toString(market),'buy', toString(amount), toString(ticker)), 
+             error = function(e) {
+               Sys.sleep(1); sendmsg(paste("[重大警示]server error!\n",e)); break
+             })
+    hold = 1;Sys.sleep(1);
     sendmsg(paste("*懶狗交易錄*\n 交易時間:",Sys.time(),
                   "\n 價格:",last(k$close),"\n 買入價格:",ticker,"\n 交易量:",amount))
     # =======繪圖==========
@@ -96,9 +106,22 @@ while(1){
   } else if((last(k$MAF) <= last(k$MAS)) & nth(k$MAF, -2) > nth(k$MAS, -2)  & hold == 1 ){
     print("出場")
     #  出場
-    sticker = client$get_public_all_tickers()[[tolower(market)]]$sell %>% as.numeric()
-    samount =  client$get_private_account_balance(mb)$balance
-    strade <- client$set_private_create_order(toString(market),'sell', toString(samount), toString(sticker))
+    tryCatch(sticker <-  client$get_public_all_tickers()[[tolower(market)]]$sell %>% as.numeric(), error = function(e) {
+      Sys.sleep(1); tryCatch(sticker <-  client$get_public_all_tickers()[[tolower(market)]]$sell %>% as.numeric(), error = function(e) {
+        sendmsg(paste("[警示]server error!\n",e)); break
+        })
+      })
+    Sys.sleep(0.5);
+    tryCatch(samount =  client$get_private_account_balance(mb)$balance, error=function(e){
+      Sys.sleep(1); tryCatch(samount =  client$get_private_account_balance(mb)$balance, error=function(e){
+        sendmsg(paste("[警示]server error!\n",e)); break
+      })
+    })
+    Sys.sleep(0.5);
+    tryCatch(strade <- client$set_private_create_order(toString(market),'sell', toString(samount), toString(sticker)),
+             error = function(e) {
+               Sys.sleep(1); sendmsg(paste("[重大警示]server error!\n",e)); break
+             })
     hold = 0
     sendmsg(paste("*懶狗交易錄[出場]*\n 交易時間:",Sys.time(),
                   "\n 價格:",last(k$close),"\n 出場價格:",sticker,"\n 交易量:",samount))
@@ -119,13 +142,26 @@ while(1){
       theme_tq()
     ggsave("tmp.png")
     sendpic()
-    break;
-    # Sys.sleep(3)
+    # break;
+    Sys.sleep(3)
   } else if((last(k$close)<=ticker*0.97) & hold==1){ # 停損
     #  停損出場
-    sticker = client$get_public_all_tickers()[[tolower(market)]]$sell %>% as.numeric()
-    samount =  client$get_private_account_balance(mb)$balance
-    strade <- client$set_private_create_order(toString(market),'sell', toString(samount), toString(sticker))
+    tryCatch(sticker <-  client$get_public_all_tickers()[[tolower(market)]]$sell %>% as.numeric(), error = function(e) {
+      Sys.sleep(1); tryCatch(sticker <-  client$get_public_all_tickers()[[tolower(market)]]$sell %>% as.numeric(), error = function(e) {
+        sendmsg(paste("[警示]server error!\n",e)); break
+      })
+    })
+    Sys.sleep(0.5);
+    tryCatch(samount =  client$get_private_account_balance(mb)$balance, error=function(e){
+      Sys.sleep(1); tryCatch(samount =  client$get_private_account_balance(mb)$balance, error=function(e){
+        sendmsg(paste("[警示]server error!\n",e)); break
+      })
+    })
+    Sys.sleep(0.5);
+    tryCatch(strade <- client$set_private_create_order(toString(market),'sell', toString(samount), toString(sticker)),
+             error = function(e) {
+               Sys.sleep(1); sendmsg(paste("[重大警示]server error!\n",e)); break
+             })
     hold = 0
     sendmsg(paste("*懶狗交易錄[停損]*\n 交易時間:",Sys.time(),
                   "\n 價格:",last(k$close),"\n 出場價格:",sticker,"\n 交易量:",samount))
@@ -146,11 +182,11 @@ while(1){
       theme_tq()
     ggsave("tmp.png")
     sendpic()
-    break;
-    # Sys.sleep(3)
+    # break;
+    Sys.sleep(3)
   } else {
     Sys.sleep(5)
-    #sendmsg(paste("*有內鬼終止交易*",Sys.time()))
   }
 }
-client$set_private_cancel_order(trade$id)
+sendmsg(paste("*有內鬼終止交易*伺服器掛了",Sys.time()))
+# client$set_private_cancel_order(trade$id)

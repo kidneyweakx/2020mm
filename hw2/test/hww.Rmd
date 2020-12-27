@@ -1,0 +1,168 @@
+---
+title: "2020微結構HW2"
+subtitle: 迴歸分析
+author: "kidneyweakx"
+date: "`r Sys.time()`"
+output:
+  html_document:
+    highlight: pygments
+    theme: flatly
+    css: ../style.css
+---
+
+### 下載packages
+```{r results='hide', message=FALSE, warning=FALSE, echo=F}
+rm(list=ls(all=T))
+knitr::opts_chunk$set(comment = NA)
+if(!require(pacman)) install.packages("pacman")
+pacman::p_load(tidyverse,car)
+```
+
+### 讀取公司規模資料並抽樣
+```{r}
+# 公司規模 CSV
+c_scale <- read.csv("../data/公司規模.csv", header = TRUE, sep=",",stringsAsFactors = FALSE) %>% as_tibble()
+odr_all <-  dir("../data/成交檔") %>% 
+  substr(1,4)
+mth_all <-  dir("../data/委託檔") %>% 
+  substr(1,4)
+# 抽樣45家公司(大中小各15)
+set.seed(11)
+c_sample <- c_scale %>% 
+  filter(code %in% odr_all & code %in% mth_all) %>% 
+  group_by(firm_size) %>% sample_n(15)
+# 取代股票代號2241為1587(皆為小公司)
+c_sample[c_sample$code==2241,] <- filter(c_scale,code == 1587)
+c_sample
+```
+
+### Read data (test origin data)
+```{r}
+# 讀取成交檔和委託檔
+company = toString(c_sample$code[13])
+Mth <-  read.csv(paste("../data/成交檔/",
+      company, "mth04_06.csv",sep=""), 
+      header = TRUE, sep=",",stringsAsFactors = FALSE) %>% as_tibble()
+```
+
+Select 50 firms and one year intraday 15min data, answer the following questions.
+1. Daily Trading volume is a useful info for traders. Try to forecast the daily trading volume from the first half hour’s transaction data as well as previous day’s transaction data, using whatever info you think relevant. As always, please show descriptive Statistics first, followed by regression analysis or machine learning if you know how. Explain your findings.
+
+```{r}
+Dtime <- c(0,9000000,9150000,9300000,9450000,9600000,
+  10150000,10300000,10450000,10600000,
+  11150000,11300000,11450000,11600000,
+  12150000,12300000,12450000,12600000,
+  13150000,13300000)
+DateVol <- Mth %>%  group_by(MthDate) %>% 
+  summarize(dVol= sum(MthShr)) %>% 
+  mutate(ldVol= lag(dVol))
+# 計算報酬率、報酬標準差及劃分時間刻度(15分為一單位)
+timeVol <- Mth %>% arrange(MthDate, MthTime) %>% group_by(MthDate) %>%
+  mutate(label= findInterval(MthTime,Dtime)-1) %>% 
+  group_by(MthDate, label) %>% 
+  summarize(lVol = sum(MthShr))
+all_vol <- left_join(timeVol, DateVol)
+summary(all_vol)
+month <- all_vol %>% group_by(MthDate) %>% summarise()
+```
+```{r}
+meanvol <-  all_vol %>% 
+  group_by(label) %>% 
+  summarize(mlVol=mean(lVol),mdVol=mean(dVol),mldVol=mean(ldVol,na.rm=TRUE))
+```
+
+```{r message=FALSE}
+Mdl <-  lm(dVol~ lVol+ldVol, 
+           filter(all_vol,label==1|label==2))
+summary(Mdl)
+```
+```{r}
+par(mfrow = c(2,2));plot(Mdl)
+par(mfrow = c(1,1));
+qqPlot(Mdl,main = "Normal Q-Q")
+```
+
+```{r}
+vif(Mdl)
+```
+
+
+```{r}
+
+```
+
+
+
+```{r}
+# cm = table(actual = all_vol$dVol, predict = pred > 0.5); cm
+# coef(Mdl) %>% exp
+# qcc.overdispersion.test(all_vol$dVol, type = "poisson")
+```
+
+
+```{r}
+all_vol %>% group_by(label) %>% 
+  mutate(s= mean(dVol)) %>% 
+  ggplot(aes(label,s)) + 
+  geom_line()
+# 将多项式回归预测值制作拟合线
+all_vol %>% ggplot(aes(label, fitted(Mdl))) + geom_line()
+#lines(all_vol$label,fitted(Mdl))
+```
+
+**預測機率 Predicted Probability (Training)**
+```{r fig.height=3.2, fig.width=6.4}
+par(cex=0.8)
+pred = predict(lm1, type="response")
+hist(pred)
+abline(v=0.5, col='red')
+```
+
+**混淆矩陣 Confusion Matrix (Training)**
+```{r}
+cmx = table(Acture=TR$PoorCare, Predict=pred > 0.5)
+cmx
+```
+
+2. Now, redo the above by subgroups( hint: by firm size, liquidity, volatility, market conditions, etc.).What can you observe?
+
+```{r}
+
+```
+
+3. Calculate the overnight returns( that is, the difference between yesterday’s closing price and today’s opening price, in percentage terms), the first 15 minutes returns, the first 30 minutes returns, and intraday returns(close minus open price in percentage) Show the descriptive statistics of each. 
+4. What is the relationship between the overnight return (day t~ t-1) and the  first 15, 30 minutes and intraday returns (day t)? Make innovative graphs to depict the relations and answer the questions. Explain what you observe. 
+5. Use regression analysis to test the relation between various intraday return variables in #4( three dependent variables)and overnight returns of t-1(the main independent variable of interest). You may add other control variables such as liquidity, trading volume of t-1 and t, market return, as well as order imbalance ( buy orders volume minus sell order volume in percentage term) of either t and t-1, etc. What is the most significant regression result? 
+
+```{r}
+lnn <- Mth %>% group_by(MthDate) %>% 
+  mutate(lnearn=(first(MthPr)-last(MthPr))/100)
+```
+
+6. Do you observe any price continuation, price reversal patterns between overnight returns and next day intraday returns( 15,30 min opening interval returns and all-day returns)? Grouping your samples by turnover ratios, trading volume, firm size, etc., do you see any difference between the regression results? Explain what you find. 
+7. Some researchers think overnight returns are proxies of stock sentiment , do you agree? Can you think of a trading strategy from the above findings?
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

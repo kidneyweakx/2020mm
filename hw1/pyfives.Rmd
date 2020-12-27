@@ -1,0 +1,166 @@
+---
+title: "2020微結構第三題"
+subtitle: 報價價差(Real)
+author: "kidneyweakx"
+date: "`r Sys.time()`"
+output:
+  html_document:
+    highlight: pygments
+    theme: flatly
+    css: ../style.css
+---
+
+
+### 下載packages
+```{r results='hide', message=FALSE, warning=FALSE, echo=F}
+rm(list=ls(all=T));gc()
+knitr::opts_chunk$set(comment = NA)
+if(!require(pacman)) install.packages("pacman")
+pacman::p_load(tidyverse, data.table, reticulate)
+reticulate::use_condaenv("cloud",conda = "D:\\app\\Anaconda3\\condabin\\conda")
+```
+
+```{r}
+np <- import("numpy",as="np")
+pd <- import("pandas",as="pd")
+dt <- import("datetime")
+```
+
+```{r}
+Odr <- read.csv("../data/委託檔0406/1101odr04_06.csv", header = TRUE, 
+                    sep=",",stringsAsFactors = FALSE) %>% as_tibble()
+```
+
+```{r}
+Odr <- Odr %>% group_by(BuySell) %>% 
+    mutate(sumPr=sum(OdrPr))
+Odb <- Odr %>% arrange()
+```
+
+
+```{r}
+list_bid_ask <- function(data){
+  data <- data %>% group_by("BuySell") %>% 
+    mutate(sumPr=sum(OdrPr))
+}
+```
+
+```{python}
+import numpy as np
+import pandas as pd
+import datetime
+# bid_ask
+def list_bid_ask(data):
+    data_all = data.groupby(['BuySell', 'OdrPr']).sum()
+    
+    data_buy = data_all.loc['B'].sort_index(ascending = False)
+    data_sell = data_all.loc['S'].sort_index()
+
+    a = data_buy.cumsum()['ChOdrShr']
+    b = pd.DataFrame(index = price)
+    c = pd.merge(b, a, how = 'left', left_index = True, right_index = True)
+    buy_list = c.sort_index(ascending = False).fillna(method = 'ffill')
+    
+    d = data_sell.cumsum()['ChOdrShr']
+    e = pd.DataFrame(index = price)
+    f = pd.merge(e, d, how = 'left', left_index = True, right_index = True)
+    sell_list = f.sort_index().fillna(method = 'ffill')
+    
+    return buy_list, sell_list
+```
+
+```{python}
+# bid_ask
+def bid_ask(buy_list, sell_list):
+    max_amount = 0
+    best_price = 0
+
+    for i in reversed(price):
+        if (min(buy_list.loc[i][0], sell_list.loc[i][0]) > max_amount):
+            best_price = i
+            max_amount = min(buy_list.loc[i][0], sell_list.loc[i][0])
+    
+    buy_list_after = buy_list[buy_list > max_amount]
+    buy_list_after = (buy_list_after - max_amount).fillna(0)
+    buy_best_list = buy_list_after[buy_list_after > 0].dropna()
+    buy_best = buy_best_list.index[0]
+    
+    sell_list_after = sell_list[sell_list > max_amount]
+    sell_list_after = (sell_list_after - max_amount).fillna(0)
+    sell_best_list = sell_list_after[sell_list_after > 0].dropna()
+    sell_best = sell_best_list.index[0]
+    
+    spread = sell_best - buy_best
+    spread = np.around(spread, 2)
+    
+    print("成交價:{:.2f}  成交量:{}  spread:{}".format(best_price, max_amount, spread), '\n')
+    
+    return buy_list_after, sell_list_after, best_price, max_amount, spread
+```
+
+```{python}
+def five_second_update(buy_list, sell_list, data):
+    for i in range(len(data)):
+        df = data.iloc[i:i+1]
+        
+        if list(df.loc[:, 'BuySell'])[0] == 'B':
+            df_zero = pd.DataFrame(data = 0, index = price, columns = ['ChOdrShr']).sort_index(ascending = False)
+            df_zero.loc[df['OdrPr']] = list(df['ChOdrShr'])
+            df_zero_cum = df_zero.cumsum()
+            buy_list = buy_list + df_zero_cum
+            buy_list = buy_list.sort_index(ascending = False)
+            
+        if list(df.loc[:, 'BuySell'])[0] == 'S':
+            df_zero = pd.DataFrame(data = 0, index = price, columns = ['ChOdrShr'])
+            df_zero.loc[df['OdrPr']] = list(df['ChOdrShr'])
+            df_zero_cum = df_zero.cumsum()
+            sell_list = sell_list + df_zero_cum
+            sell_list = sell_list.sort_index()
+            
+    return buy_list, sell_list
+```
+
+```{python}
+# Read CSV
+data = pd.read_csv('1101odr04_06.csv')
+# 計算單日
+data_day =  data[data['OdrDate'] == 20180402]
+
+time = []
+for i in range(len(data_day)):
+    a = str(data_day['OdrDate'][i])
+    b = str(data_day['OdrTime'][i])
+    c = a + b
+    time.append(c)
+
+# 
+data_day.loc[:, ['time']] = time
+
+min_price = min(list(data_day['OdrPr']))
+max_price = max(list(data_day['OdrPr']))
+price = np.arange(min_price, max_price, 0.05)
+price = np.around(price, 2) # 一定要加
+
+print(min_price, max_price)
+
+# 時間轉換
+delta = datetime.timedelta(seconds = 5)
+delta_average = datetime.timedelta(minutes = 15)
+base = pd.to_datetime('201804029000000', format = '%Y%m%d%H%M%S%f')
+data_time =  pd.to_datetime(data_day['time'], format = '%Y%m%d%H%M%S%f')
+
+# df
+df = data_day[(base >= data_time)]
+buy, sell = list_bid_ask(df)
+buylist, selllist, pr, amount, spr = bid_ask(buy, sell)
+
+# 5sec
+for i in range(1, 3961):
+    df_5sec = data_day[(base + delta * (i - 1) < data_time) & (base + delta * i >= data_time)]
+    print(base + delta * i)
+    
+    buy_before, sell_before = five_second_update(buylist, selllist, df_5sec)
+    buylist, selllist, pr, amount, spr = bid_ask(buy_before, sell_before)
+
+```
+

@@ -1,0 +1,183 @@
+---
+title: "2020微結構第三題"
+subtitle: 報價價差(Fake)
+author: "kidneyweakx"
+date: "`r Sys.time()`"
+output:
+  html_document:
+    highlight: pygments
+    theme: flatly
+    css: ../style.css
+---
+
+```{r results='hide', message=FALSE, warning=FALSE, echo=F}
+rm(list=ls(all=T))
+knitr::opts_chunk$set(comment = NA)
+if(!require(pacman)) install.packages("pacman")
+pacman::p_load(tidyverse)
+```
+
+```{r}
+Odr <- read.csv("data/委託檔/1101odr04_06.csv", header = TRUE, sep=",",stringsAsFactors = FALSE) %>% as_tibble()
+Mth <- read.csv("data/成交檔/1101Mth04_06.csv", header = TRUE, sep=",",stringsAsFactors = FALSE) %>% as_tibble()
+```
+
+```{r}
+MthTime <- Mth %>% filter(BuySell == "S") %>% 
+  select(MthDate, MthTime,MthPr) %>% arrange(MthDate,MthTime)
+```
+
+```{r}
+OdrMth <- full_join(Odr, Mth, by= c('OdrDate'='MthDate'))
+#OdrMth %>%filter(OdrDate== 20180402)
+```
+
+```{r}
+o <- OdrMth %>% group_by(OdrDate,MthTime) %>% 
+  mutate(maxB = max(OdrPr[Odr$OdrPr <= MthTime$MthPr[MthTime] %in% 
+     Odr$BuySell[Odr$BuySell=="B"] %in%
+       Odr$ChOdrShr[Odr$ChOdrShr > 0] %in%
+         Odr$OdrDate[Odr$OdrDate == 
+                       Mth$MthDate[i]]
+     ]),
+    minS = min(Odr$OdrPr[Odr$OdrPr >= MthTime$MthPr[MthTime] %in% 
+     Odr$BuySell[Odr$BuySell=="S"] %in%
+        Odr$ChOdrShr[Odr$ChOdrShr > 0] %in%
+         Odr$OdrDate[Odr$OdrDate == 
+                       Mth$MthDate[i]]
+     ]),
+    ChOdrShr = replace(replace(ChOdrShr,OdrPr == maxb, 
+                       Odr$ChOdrShr[Odr$OdrPr == maxb] -  Odr$ChOdrShr[Odr$OdrPr == minb]),OdrPr == minS,
+                       Odr$ChOdrShr[Odr$OdrPr == maxb] -  Odr$ChOdrShr[Odr$OdrPr == minb]
+  )
+    )
+    
+  # maxB = max(OdrPr[Odr$OdrPr <= MthTime$MthPr[
+  #   OdrTime <= MthTime$MthTime] %in% 
+  #    Odr$BuySell[Odr$BuySell=="B"] %in%
+  #      Odr$ChOdrShr[Odr$ChOdrShr > 0] %in%
+  #        Odr$OdrDate[Odr$OdrDate == 
+  #                      Mth$MthDate[i]]
+  #    ])
+  # minS = min(Odr$OdrPr[Odr$OdrPr >= Mth$MthPr[i] %in% 
+  #    Odr$BuySell[Odr$BuySell=="S"] %in%
+  #       Odr$ChOdrShr[Odr$ChOdrShr > 0] %in%
+  #        Odr$OdrDate[Odr$OdrDate == 
+  #                      Mth$MthDate[i]]
+  #    ])
+
+  # ChOdrShr <- Odr$ChOdrShr[Odr$OdrPr == maxb] -    
+  #   Odr$ChOdrShr[Odr$OdrPr == minb]
+  
+
+```
+
+
+```{r}
+data_day <-  data %>% 
+  filter(OdrDate == 20180402)
+```
+
+```{r}
+data_day <- data_day %>% 
+  arrange(OdrDate, OdrTime) %>% 
+  mutate(dtime= paste(toString(OdrDate),toString(OdrTime)))
+
+# tl <- lapply(1:len(data_day),function(i){
+#     a = str(data_day['OdrDate'][i])
+#     b = str(data_day['OdrTime'][i])
+#     c = a + b
+#     time.append(c)
+# }  
+# do.call
+# data_day[, ['time']] = time
+```
+
+```{r}
+data <- arrange(data)
+d_all <- data %>% select(BuySell, OdrPr)
+d_buy <- d_all %>% filter(BuySell == "B")
+d_sell <- d_all %>% filter(BuySell == "S") 
+```
+
+
+```{r}
+min_price = min(data_day$OdrPr)
+max_price = max(data_day$OdrPr)
+price = seq(from= min_price, to= max_price, by= 0.05)
+price = round(price, 2) # 一定要加
+
+cat(min_price,max_price,sep=' ')
+```
+```{r}
+bidask <- function(df,price){
+  max_amt <- 0
+  best_amt <- 0
+  for(i in rev(price)){
+     if (min(buy_list.loc[i][0], sell_list.loc[i][0]) > max_amount):
+            best_price = i
+            max_amount = min(buy_list.loc[i][0], sell_list.loc[i][0])
+  }
+} 
+```
+
+```{r}
+list_bid_ask <- function(data){
+  data_all <- data %>% group_by(BuySell, OdrPr) %>% 
+    n()
+  
+}
+```
+
+```{r}
+# Odrs <- Odr %>% filter(BuySell == "S")
+# Odrb <- Odr %>% filter(BuySell == "B")
+# ```
+# 
+# ```{r}
+# Odr1 <- Odr %>%
+#   filter(OdrDate == 20180402) %>% 
+#   arrange(OdrDate, OdrTime) %>% 
+#   mutate(dtime= paste(toString(OdrDate),toString(OdrTime)))
+# ```
+# 
+# ```{r}
+# min_price <-  min(Odr1$OdrPr)
+# max_price <-  max(Odr1$OdrPr)
+# price <-  seq(from= min_price, to= max_price, by= 0.05)
+# price <-  round(price, 2) # 一定要加
+# 
+# cat(min_price, max_price)
+```
+
+
+
+```{r}
+# Mth <-  Mth %>% arrange(MthDate, MthTime)
+# Odr <-  Odr %>% arrange(OdrDate, OdrTime)
+# MAXB <- function(MthPr, OdrDate){
+#   max_B = max(Odr$OdrPr[Odr$OdrPr <= MthPr %in% 
+#      Odr$BuySell[Odr$BuySell=="B"] %in%
+#          Odr$OdrDate[Odr$OdrDate == OdrDate]
+#      ])
+#   return(max_B)
+# }
+```
+
+
+```{r}
+# s <- mdOdr %>% arrange(OdrTime,MthTime) %>% 
+#   group_by(OdrDate, MthTime) %>%
+#   mutate(max_B=MAXB(MthPr, OdrDate),
+#          min_S=min(Odr$OdrPr[Odr$OdrPr > MthPr %in% 
+#      Odr$BuySell[Odr$BuySell=="S"] %in%
+#          Odr$OdrDate[Odr$OdrDate == OdrDate]
+#      ])
+#      )
+#   
+#   
+```
+
+
+
+

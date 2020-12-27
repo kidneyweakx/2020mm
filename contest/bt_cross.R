@@ -21,11 +21,11 @@ for(mk in c(1:8)){
   k <-  client$get_public_k_line(market[mk], 
                                  toString(limit), 
                                  toString(period[2]),
-                                 toString(trange(days(150)))) %>%  r2df()
+                                 toString(trange(days(754)))) %>%  r2df()
   colnames(k) <- c("date", "open", "high", "low", "close", "volume")
   stockData <- k %>% mutate(date=as_datetime(date)) 
   stockData <- stockData %>%
-    tq_mutate(select = close, mutate_fun = BBands, n=26, sd=2) %>% 
+    tq_mutate(select = close, mutate_fun = BBands, n=30, sd=2) %>% 
     tq_mutate(select = close, mutate_fun = MACD) %>% 
     tq_mutate(select = close, mutate_fun = momentum, n =10) %>% 
     tq_mutate(select = close, mutate_fun = SMA, n =10) %>% 
@@ -33,10 +33,9 @@ for(mk in c(1:8)){
 # ================================================
   # 雙MA策略 (MA-Cross)
   inSiteTable <- stockData %>%
-    mutate(MAF=SMA(close, 30),
-           MAS=SMA(close, 60),
-           MA120 = SMA(close, 120)) %>%
-    filter(MA120>= close) %>%
+    filter(lag(dn) > lag(close) & dn  <=  close |  # 下往上穿越下線：可能短期會反轉
+             lag(mavg) > lag(close) & mavg <= close  #下往上穿越中線：可能會加速向上
+    ) %>%
     select(inDate=date, buyPrice=close)
 #=================================================
   outSiteTable <- stockData %>%
@@ -44,6 +43,11 @@ for(mk in c(1:8)){
            MAS= SMA(close, 15)) %>%
     filter(MAF<=MAS,lag(MAF)>lag(MAS)) %>%
     select(outDate=date, sellPrice=close)
+  # outSiteTable <- stockData %>%
+  #   filter(lag(up) < lag(close) & up >= close |# 上往下跌破上線：暗示上漲趨勢結束
+  #            lag(mavg) < lag(close) & mavg >= close# 由上往下跌破中線：可能會下跌
+  #            ) %>%
+  #   select(outDate=date, sellPrice=close)
   # ==============================================
   tradeDetailTable <- NULL   
   

@@ -1,0 +1,177 @@
+---
+title: "MAX Exchange 分析(Python API)"
+author: "kidneyweakx"
+date: "`r Sys.time()`"
+output:
+  html_document:
+    highlight: pygments
+    theme: flatly
+    css: ../style.css
+---
+```{r include=FALSE}
+rm(list=ls(all=T));gc()
+if(!require(pacman)) install.packages("pacman")
+pacman::p_load(tidyverse,tidyquant, reticulate)
+# python anaconda 位置 (修改cloud成你的環境，conda為ana/miniconda路徑)
+use_condaenv("cloud",conda = "D:\\app\\Anaconda3\\condabin\\conda") 
+```
+
+### [資料來源max.maicoin.com/documents/api_list](https://max.maicoin.com/documents/api_list)
+
+> 加入API方法 [Python API](https://github.com/kulisu/max-exchange-api-python3)
+
++ 使用`git clone https://github.com/kulisu/max-exchange-api-python3` 到本地
++ 將max資料夾放置在該Rmd旁
++ `file.edit(path.expand(file.path("~", ".Renviron")))`
++ 加入環境變數範例: `MAX_API_KEY="yourkey"`
++ 加入後**重新開啟** Rstudio
+
+```{r}
+# 加入 API (reticulate Python module)
+max <- import("max.client") # Python方法
+client <- max$Client(Sys.getenv("MAX_API_KEY"),Sys.getenv("MAX_API_SECRET"))
+```
+
+### Python data轉換dataframe
++ 有時候會失效(需要運用apply處理)
+
+```{r}
+# 要到的data轉換成dataframe
+r2df <- function(l){
+  data.frame(matrix(unlist(l), nrow=length(l), byrow=T),
+                 stringsAsFactors=FALSE)}
+```
+
+
+### 繪製簡易K線
+```{r}
+trange <- function(x){(Sys.time() - x) %>% as.numeric() %>% round()}
+market <- 'btcusdt'; limit <- 10000; # make it bigger that it not limit
+period <- c(1,5,15,30,60,120,240,360,720,1440,4320,10080) # 時間 (分鐘)
+# 需加入時間
+k <-  client$get_public_k_line('btctwd', 
+                               toString(limit), 
+                               toString(period[3]),
+                               toString(trange(days(30)))) %>%  r2df()
+```
+
+```{r}
+colnames(k) <- c("timestamp", "open", "high", "low", "close", "volume")
+df <- k %>% mutate(timestamp=as_datetime(timestamp)) 
+```
+
+```{r}
+atr <- df[,c("high","low","close")] %>% ATR() %>%a s.data.frame()
+df <- cbind(df,atr) %>%na.omit()
+
+ATRop <- function(Pr,lagA,i){
+  PrP = Pr+i*1.618
+  PrM = Pr-i*1.618
+  ifelse(Pr > lagA,
+         return(max(c(lagA,PrM))),
+         return(min(c(lagA,PrP))))
+}
+```
+
+```{r}
+df$operation <- 0
+for (i in c(1:nrow(df))) {
+  ifelse(i >1,df$operation[i] <- ATRop(df$close[i],df$operation[i-1],df$atr[i]),
+         df$operation[i] <- df$close[i]-df$atr[i])
+  
+}
+
+df <- df%>%mutate(lagop = lag(operation),lagclose = lag(close))
+
+```
+
+
+```{r}
+inSiteTable <- df%>% filter(close<lagop,
+                            operation<lagop,
+                            open > close)%>% select(inDate=timestamp, buyPrice=close)
+
+outSiteTable <- df%>%
+  mutate(
+                  # 計算第t日的20日移動平均線
+                  MA10=SMA(close, 10),
+                  # 計算第t-1日的20日移動平均線
+                  lagMA10=lag(MA10,1))%>%
+  filter(open<close,close<MA10,lagclose>MA10)%>% 
+  select(outDate=timestamp, sellPrice=close)
+```
+
+```{r}
+tradeDetailTable <- NULL   
+
+for(ix in 1:nrow(inSiteTable)){
+  # 目前的進場日期
+  inDate <- inSiteTable$inDate[ix] 
+  # 找尋進場日期往後最近的出場位置
+  outSite <- which(outSiteTable$outDate>inDate)[1]  
+  # 防呆機制，如果進場日期在資料尾端，有可能發生資料不足找不到出場位置的狀況
+  if(length(outSite)>0){                            
+    # 將該筆進場資訊與對應的出場資訊合併，並儲存至交易明細表內
+    tradeDetailTable <- bind_rows(tradeDetailTable, 
+                                  bind_cols(inSiteTable[ix,],
+                                            outSiteTable[outSite,]))
+    outSiteTable <- outSiteTable[-outSite,]
+  }
+  
+}
+```
+
+```{R}
+
+#tradeDetailTable <- tradeDetailTable[,c(1,5,14,18)] %>%na.omit()
+
+#colnames(tradeDetailTable) <- c("inDate","buyPrice","outDate","sellPrice")
+
+buyCostR <- 0.002   # 買入交易成本
+
+sellCostR <- 0.002  # 賣出交易成本
+
+tradeDetailTable <- tradeDetailTable %>%
+                      mutate(
+                        # 計算報酬率
+                        ret=sellPrice*(1-sellCostR)/(buyPrice*(1+buyCostR))-1,
+                        # 計算持有日數
+                        holdDays=as.numeric(outDate-inDate))%>%na.omit()
+
+# 平均報酬率
+meanRet <- mean(tradeDetailTable$ret)
+# 報酬率標準差
+sdRet <- sd(tradeDetailTable$ret) 
+# 交易次數
+tradeNums <- nrow(tradeDetailTable) 
+# 勝率
+winRatio <- sum(as.numeric(tradeDetailTable$ret>0))/tradeNums
+# 最大報酬率
+maxRet <- max(tradeDetailTable$ret)
+# 最小報酬率
+minRet <- min(tradeDetailTable$ret) 
+# 平均持有日數
+avgHoldDays <- mean(tradeDetailTable$holdDays) 
+
+```
+
+```{r}
+cat(paste0("*********策略回測績效*********\n",
+
+           "平均報酬率: ",round(meanRet*100,2)," %\n",
+
+           "交易次數: ",tradeNums," 次\n",
+
+           "勝率: ",round(winRatio*100,2)," %\n",
+
+           "報酬率標準差: ",round(sdRet*100,2)," %\n",
+
+           "最大報酬率: ",round(maxRet*100,2)," %\n",
+
+           "最小報酬率: ",round(minRet*100,2)," %\n",
+
+           "平均持有分鐘數: ",round(avgHoldDays,2),"分鐘"))
+```
+
+
+

@@ -9,7 +9,7 @@ if(!require(binancer)) {
 setwd("D://workspace//R//Course//2020mm//contest//")
 ## ===============================================================
 # Setting Telegram Bot
-## file.edit(path.expand(file.path("~", ".Renviron")))
+file.edit(path.expand(file.path("~", ".Renviron")))
 ## example. R_TELEGRAM_BOT_RTelegramBot=TOKEN
 bot <- Bot(token = bot_token("RTelegramBot"))
 
