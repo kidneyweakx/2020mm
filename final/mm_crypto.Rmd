@@ -1,0 +1,141 @@
+---
+title: "MAX Exchange 參照交易所交易"
+author: "kidneyweakx"
+date: "`r Sys.time()`"
+output:
+  html_document:
+    highlight: pygments
+    theme: flatly
+    css: ../style.css
+---
+```{r include=FALSE}
+rm(list=ls(all=T));gc()
+if(!require(pacman)) install.packages("pacman")
+pacman::p_load(tidyverse,tidyquant, reticulate, patchwork)
+if(!require(binancer)) {
+  if(!require(devtools)) install.packages("devtools")
+  devtools::install_github("daroczig/binancer")
+}
+# python anaconda 位置 (修改cloud成你的環境，conda為ana/miniconda路徑)
+use_condaenv("cloud",conda = "D:\\app\\Anaconda3\\condabin\\conda") 
+max <- import("max.client"); client <- max$Client("","")
+```
+### 轉換Python list to data.frame()
+```{r}
+r2df <- function(l){
+  data.frame(matrix(unlist(l), nrow=length(l), byrow=T),
+                 stringsAsFactors=FALSE)}
+```
+
+### get binance and max data
+```{r}
+# crypto <- c('btc','eth','bch','ltc','xrp')
+# yrlong <- 2170
+# time <- lubridate::ymd_hms("2019-01-01 00:00:00") - hours(8)
+# market <- paste0(toupper(crypto[1],'USDT'))
+# limit <- 1000; period <- 1
+# bink <- do.call(rbind,lapply(1:yrlong,function(i){
+#   start <- time + hours((i-1)*12)
+#   end <- time + hours(i*12)-seconds(1)
+#   bk <- tryCatch(binance_klines(toupper(market), 
+#                   paste0(period,'m'), limit = limit, 
+#                   start, end),error=function(e){
+#                     data.frame()
+#                   })
+# }))
+# daylong <- yrlong/2
+# maxk <- do.call(rbind,lapply(1 :daylong,function(i){
+#   start <- as.numeric(time+days((i-1)),tz="UTC")
+#   k <- tryCatch(client$get_public_k_line(tolower(market),
+#                   toString(1440),
+#                   toString(period),
+#                   toString(start)) %>%  r2df(),error=function(e){
+#                     data.frame()
+#                   })
+# }))
+# 
+# colnames(maxk) <- c("date", "open", "high", "low", "close", "volume")
+# maxk <- maxk %>% mutate(date=as_datetime(date, tz="Asia/Taipei"))
+# save(maxk, bink, file=paste0("2yrk",crypto[1],".RData"))
+```
+
+### 讀取五大幣種資料及繪製
+```{r}
+crypto <- c('btc','eth','bch','ltc','xrp')
+sapply(1:length(crypto), function(x){
+  load(paste0('2yrk',crypto[x],'.RData'))
+  # max 交易所
+  max2df <- maxk %>% arrange(date) %>% 
+    mutate(ret = log(close) - log(lag(close)),
+           thm = hm(paste0(hour(date),":",minute(date)))) %>% 
+    group_by(thm) %>% 
+    mutate(rstd = sd(ret, na.rm=T),
+          bdd = mean(rstd),
+           ami = abs(mean(ret,na.rm = TRUE))/mean(volume,na.rm = TRUE))
+  # 幣安 交易所
+  bin2df <- bink %>% arrange(open_time) %>% 
+    mutate(ret = log(close) - log(lag(close)),
+           thm = hm(paste0(hour(open_time),":",minute(open_time)))) %>% 
+    group_by(thm) %>% 
+    mutate(rstd = sd(ret, na.rm=T),
+           bdd = mean(rstd),
+           ami = abs(mean(ret,na.rm = TRUE))/mean(volume,na.rm = TRUE))
+  # 取內部計算出的ami、vol及報酬
+  mdf <- max2df %>% group_by(thm) %>% 
+  summarise(mret = mean(ret, na.rm = T),
+            mrstd = mean(rstd, na.rm = T),
+            mbdd = mean(bdd, na.rm = T),
+            mami = mean(ami, na.rm = T),
+            mvol = mean(volume, na.rm = T)) %>% 
+  mutate(label = row_number(),exchange="max")
+  bdf <- bin2df %>% group_by(thm) %>% 
+    summarise(mret = mean(ret, na.rm = T),
+              mrstd = mean(rstd, na.rm = T),
+              mbdd = mean(bdd, na.rm = T),
+              mami = mean(ami, na.rm = T),
+              mvol = mean(volume, na.rm = T)) %>% 
+    mutate(label = row_number(),exchange="binance")
+  mbdf <- rbind(mdf,bdf)
+  # max + binanace 繪製比較圖
+  mbvol <- mbdf %>% ggplot(aes(x= label, y = mvol,col=exchange) ) +
+    geom_line() + labs(x= "時間軸", y ="交易量") + 
+    theme(legend.position = "bottom",legend.direction = "horizontal")
+  mbami <- mbdf %>% ggplot() +
+    geom_line(aes(x= label, y = mami, col=exchange)) +
+    labs(x= "時間軸", y ="Amihud") + 
+    theme(legend.position = "none")
+  mbdd <- mbdf %>% ggplot() +
+    geom_line(aes(x= label, y = mrstd, col=exchange)) +
+    labs(x= "時間軸", y ="波動度") + 
+    theme(legend.position = "none")
+  mbp <- (mbvol|(mbami/mbdd)) +  plot_annotation(
+    title = paste('[',crypto[x],']',
+                  'binance exchange vs max exchange'))
+  print(mbp)
+  # max & binanace 分別繪製
+  m1 <- mdf %>% ggplot() +
+    geom_line(aes(x= label, y = mvol), col="blue") +
+    labs(x= "時間軸", y ="交易量")
+  m2 <- mdf %>% ggplot() +
+    geom_line(aes(x= label, y = mami), col="blue") +
+    labs(x= "時間軸", y ="Amihud")
+  m3 <- mdf %>% ggplot() +
+    geom_line(aes(x= label, y = mrstd), col="blue") +
+    labs(x= "時間軸", y ="波動度")
+  b1 <- bdf %>% ggplot() +
+    geom_line(aes(x= label, y = mvol), col="orange") +
+    labs(x= "時間軸", y ="交易量")
+  b2 <- bdf %>% ggplot() +
+    geom_line(aes(x= label, y = mami), col="orange") +
+    labs(x= "時間軸", y ="Amihud")
+  b3 <- bdf %>% ggplot() +
+    geom_line(aes(x= label, y = mrstd), col="orange") +
+    labs(x= "時間軸", y ="波動度")
+  mabp <- ((m1+m2+m3) /(b1+b2+b3))+  plot_annotation(
+    title = paste('[',crypto[x],']',
+                  'binance exchange vs max exchange'))
+  print(mabp)
+})
+```
+
+

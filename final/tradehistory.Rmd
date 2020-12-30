@@ -1,0 +1,97 @@
+---
+title: "tradehistory"
+author: "kidneyweakx"
+date: "`r Sys.time()`"
+output:
+  html_document:
+    highlight: pygments
+    theme: flatly
+    css: ../style.css
+---
+
+### API & Package Setting
+```{r setup, include=FALSE}
+rm(list=ls(all=T))
+if(!require(pacman)) install.packages("pacman")
+pacman::p_load(tidyverse, tidyquant,reticulate)
+# reticulate
+use_condaenv("cloud",conda = "D:\\app\\Anaconda3\\condabin\\conda")
+max <- import("max.client")
+client <- max$Client(Sys.getenv("MAX_API_KEY"),
+                     Sys.getenv("MAX_API_SECRET"))
+```
+
+### Python list to data.frame
+```{r}
+r2df <- function(l) {
+  if(length(l)!=0){
+    df <- data.frame(matrix(unlist(l), nrow=length(l), byrow=T),
+                     stringsAsFactors=FALSE);
+    name <- names(l[[1]]);colnames(df) <- name[1:ncol(df)];
+    return(df)} }
+```
+
+### Get market & trade history
+```{r}
+m <- client$get_public_all_markets() %>% r2df
+m <- m %>% filter(quote_unit=="usdt");get <- 0
+trhis <- do.call(rbind,lapply(c(1:nrow(m)), function(i){ 
+  client$get_private_trade_history(m$id[i]) %>% r2df }))
+colnames(trhis) <- c('id','price','volume','funds','market',
+                     'market_name','created_at','created_at_in_ms',
+                     'side','fee','fee_currency','order_id','info',
+                     'vol','fee_currency','oid')
+tr <- trhis %>% select(price, volume, market, created_at,side) %>% 
+  mutate(date = as_datetime(as.numeric(created_at)),
+        usdtprice = as.numeric(price)*as.numeric(volume)) 
+```
+
+### Show trading history
+```{r}
+table(tr$market,tr$side)
+cat("交易次數:", nrow(tr),"筆")
+```
+
+
+```{r}
+lapply(1:nrow(m), function(i){
+  start <- as.POSIXct("2020-12-01 00:00:00",tz="Asia/Taipei") %>%
+  as.numeric()
+  k <-  client$get_public_k_line(m$id[i], 
+                                 toString(10000), # limit 
+                                 toString(60),    # time period
+                                 toString(start)) %>%  r2df()
+  colnames(k) <- c("timestamp", "open", "high", 
+                   "low", "close", "volume")
+  k <- k %>% mutate(timestamp=as_datetime(timestamp))
+
+  k %>% ggplot(aes(x = timestamp, y = close)) +
+    geom_barchart(aes(open = open, high = high, 
+                      low = low, close = close),
+                  colour_up = "firebrick3", colour_down = "chartreuse3",
+                  fill_up  = "firebrick3", fill_down  = "chartreuse3",
+                  size = 0.5) +
+    labs(title = paste(m$id[i], "Line Chart","Blue=bid Red=ask"),
+         y = "價格(USDT)", x = "日期") +
+    geom_ma(color = "darkblue", linetype = 7,size = 0.1) +
+    
+    geom_vline(xintercept=as.numeric(
+      tr[tr$side == "bid"&tr$market == m$id[i],]$date),
+               linetype=1, col="blue") +
+    geom_vline(xintercept=as.numeric(
+      tr[tr$side == "ask"&tr$market == m$id[i],]$date),
+               linetype=1, col="red") +
+    theme_tq()
+})
+ 
+```
+
+
+```{r}
+tr %>% group_by(market) %>% 
+  summarise(buyp = mean(tr[tr$market==market&tr$side=="bid",]),
+            sellp =mean(tr[tr$market==market&tr$side=="ask",]),
+            ret= (sellp/buyp)-1
+              )
+```
+
