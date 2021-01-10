@@ -1,0 +1,167 @@
+---
+title: "MAX Exchange v.s. Binance Exchange"
+author: "kidneyweakx"
+date: "`r Sys.time()`"
+output:
+  html_document:
+    highlight: pygments
+    theme: flatly
+    css: ../style.css
+---
+```{r include=FALSE}
+rm(list=ls(all=T));gc()
+if(!require(pacman)) install.packages("pacman")
+pacman::p_load(tidyverse,tidyquant, reticulate, patchwork,scales)
+if(!require(binancer)) { # binance API Packages
+  if(!require(devtools)) install.packages("devtools")
+  devtools::install_github("daroczig/binancer")
+}
+# python anaconda location(can skip this)
+use_condaenv("cloud",conda = "D:\\app\\Anaconda3\\condabin\\conda") 
+max <- import("max.client"); client <- max$Client("","")
+```
+
+### Transform Python list to data.frame()
+```{r}
+r2df <- function(l){
+  data.frame(matrix(unlist(l), nrow=length(l), byrow=T),
+                 stringsAsFactors=FALSE)}
+```
+
+### 初步處理(already get 5 coins' data)
+```{r}
+crypto <- c('btc','eth','bch','ltc','xrp')
+x=1 # 以btc為例作測試
+load(paste0('2yrk',crypto[x],'.RData'))
+# max 交易所
+max2df <- maxk %>% arrange(date) %>% 
+  mutate(ret = log(close) - log(lag(close)),
+         thm = strftime(date,"%H:%M:%S"),
+         labels = date) %>% 
+  group_by(thm) %>% 
+  mutate(rstd = sd(ret, na.rm=T),
+          bdd = mean(rstd),
+          ami = abs(mean(ret,na.rm = TRUE))/mean(volume,na.rm = TRUE))
+# 幣安 交易所
+bin2df <- bink %>% arrange(open_time) %>% 
+  mutate(ret = log(close) - log(lag(close)),
+         thm = strftime(open_time,"%H:%M:%S")) %>%
+  group_by(thm) %>%
+  mutate(rstd = sd(ret, na.rm=T),
+         bdd = mean(rstd),
+         ami = abs(mean(ret,na.rm = TRUE))/mean(volume,na.rm = TRUE))
+```
+
+### 合併max 資料及binance 資料
+```{r}
+# 取內部計算出的ami、vol及報酬
+mdf <- max2df %>% group_by(thm) %>% 
+  summarise(mret = mean(ret, na.rm = T),
+            mrstd = mean(rstd, na.rm = T),
+            mbdd = mean(bdd, na.rm = T),
+            mami = mean(ami, na.rm = T),
+            mvol = mean(volume, na.rm = T)) %>% 
+  mutate(label = row_number(),exchange="max")
+bdf <- bin2df %>% group_by(thm) %>% 
+  summarise(mret = mean(ret, na.rm = T),
+            mrstd = mean(rstd, na.rm = T),
+            mbdd = mean(bdd, na.rm = T),
+            mami = mean(ami, na.rm = T),
+            mvol = mean(volume, na.rm = T)) %>% 
+  mutate(label = row_number(),exchange="binance")
+mbdf <- rbind(mdf,bdf)
+```
+
+### 比較圖
+```{r}
+# max + binanace 繪製比較圖
+mbdf %>% mutate(dd= ymd_hms(paste("2021-01-01",thm))) %>% 
+  ggplot(aes(x= dd, y = mvol,col=exchange) ) +
+    geom_line() + labs(x= "時間軸", y ="交易量") + 
+       scale_x_datetime(labels = date_format("%H:%m"), 
+                        breaks = date_breaks("4 hours"))+
+  geom_label(data = . %>% 
+               filter(mvol == max(bdf$mvol)|mvol==max(mdf$mvol)),
+             aes(label = sprintf('%0.2f', mvol)), hjust = -0.5) +
+    theme(legend.position = "bottom",legend.direction = "horizontal")
+```
+
+```{r}
+ggplot()+
+  geom_line(data= max2df,aes(x=date, y=volume),col="blue")+
+  geom_line(data= bin2df,aes(x= open_time, y =volume),col="orange")
+```
+### 迴歸分析
+```{r}
+bin3df <- bin2df %>% ungroup() %>% 
+  select(.,c("open_time","close")) %>%
+  mutate(lagbinprice = lag(close),
+         lagbin2min = lag(close, 2),
+         lagbin5min = lag(close, 5),
+         lagbin15min = lag(close, 15))
+
+maxbin3df <- max2df %>% ungroup() %>% select("close","date","ret","rstd","bdd","ami") %>% 
+  mutate(lagmaxprice = lag(close),
+         lagmaxret = lag(ret),
+         lagmaxami=lag(ami)) %>%
+  left_join(.,bin3df,by=c("date" ="open_time")) %>% na.omit()
+colnames(maxbin3df)[1] <- "maxprice"
+colnames(maxbin3df)[10] <- "binprice"
+summary(maxbin3df)
+```
+
+```{r}
+model <- lm(maxprice ~
+              lagbinprice+lagbin2min+lagbin5min+lagbin15min+
+              lagmaxprice+bdd+ami+lagmaxret,data = maxbin3df)
+
+summary(model)
+```
+### ETH 測試
+```{r}
+x=2 # eth
+load(paste0('2yrk',crypto[x],'.RData'))
+# max 交易所
+max2df <- maxk %>% arrange(date) %>% 
+  mutate(ret = log(close) - log(lag(close)),
+         thm = strftime(date,"%H:%M:%S"),
+         labels = date) %>% 
+  group_by(thm) %>% 
+  mutate(rstd = sd(ret, na.rm=T),
+          bdd = mean(rstd),
+          ami = abs(mean(ret,na.rm = TRUE))/mean(volume,na.rm = TRUE))
+# 幣安 交易所
+bin2df <- bink %>% arrange(open_time) %>% 
+  mutate(ret = log(close) - log(lag(close)),
+         thm = strftime(open_time,"%H:%M:%S")) %>%
+  group_by(thm) %>%
+  mutate(rstd = sd(ret, na.rm=T),
+         bdd = mean(rstd),
+         ami = abs(mean(ret,na.rm = TRUE))/mean(volume,na.rm = TRUE))
+```
+
+```{r}
+bin3df <- bin2df %>% ungroup() %>% 
+  select(.,c("open_time","close")) %>%
+  mutate(lagbinprice = lag(close),
+         lagbin2min = lag(close, 2),
+         lagbin5min = lag(close, 5),
+         lagbin15min = lag(close, 15))
+
+maxbin3df <- max2df %>% ungroup() %>% select("close","date","ret","rstd","bdd","ami") %>% 
+  mutate(lagmaxprice = lag(close),
+         lagmaxret = lag(ret),
+         lagmaxami=lag(ami)) %>%
+  left_join(.,bin3df,by=c("date" ="open_time")) %>% na.omit()
+colnames(maxbin3df)[1] <- "maxprice"
+colnames(maxbin3df)[10] <- "binprice"
+summary(maxbin3df)
+```
+
+```{r}
+model <- lm(maxprice ~
+              lagbinprice+lagbin2min+lagbin5min+lagbin15min+
+              lagmaxprice+bdd+ami+lagmaxret,data = maxbin3df)
+
+summary(model)
+```

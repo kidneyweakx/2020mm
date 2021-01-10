@@ -1,0 +1,111 @@
+---
+title: "MAX Exchange Price Google Trends"
+author: "kidneyweakx"
+date: "`r Sys.time()`"
+output:
+  html_document:
+    highlight: pygments
+    theme: flatly
+    css: ../style.css
+---
+
+```{r include=FALSE}
+rm(list=ls(all=T));gc()
+if(!require(pacman)) install.packages("pacman")
+pacman::p_load(tidyverse,tidyquant, reticulate, gtrendsR, patchwork)
+# python anaconda location(can skip this)
+use_condaenv("cloud",conda = "D:\\app\\Anaconda3\\condabin\\conda") 
+max <- import("max.client"); client <- max$Client("","")
+```
+
+```{r}
+timerange <- paste(ymd('2018-01-01'),Sys.Date())
+btchit <-  gtrends('bitcoin',c("US","TW"),
+                   timerange)$interest_over_time
+ethhit <- gtrends('ethereum',c("US","TW"),
+                  timerange)$interest_over_time
+```
+
+```{r}
+
+```
+
+### 繪製簡易K線
+```{r}
+r2df <- function(l){
+  data.frame(matrix(unlist(l), nrow=length(l), byrow=T),
+                 stringsAsFactors=FALSE)}
+getk <- function(market,range,start){
+  k <-  client$get_public_k_line(market, 
+                               toString(10000), 
+                               toString(range),
+                               toString(start)) %>%  r2df()
+  colnames(k) <- c("date", "open", "high", "low", "close", "volume")
+  df <- k %>% mutate(date=as_datetime(date))
+}
+```
+
+
+```{r}
+# btc
+market <- 'btctwd'
+t <- as.numeric(ymd_hms("2018-01-01 00:00:00"))
+btcdf <- getk(market, 1440, t)
+btcp <- btcdf %>% ggplot(aes(x = date, y = close)) +
+  geom_barchart(aes(open = open, high = high, 
+                    low = low, close = close),
+                colour_up = "firebrick3", 
+                colour_down = "chartreuse3",
+                fill_up  = "firebrick3", 
+                fill_down  = "chartreuse3", size = 1) +
+  labs(title = paste(market, "Line Chart"),
+       y = "Closing Price", x = "") +
+  geom_ma(color = "darkblue", linetype = 7,size = 0.5) +
+  theme_tq()
+
+bp <- btchit %>% ggplot(aes(date, hits,col=geo)) + geom_line() +
+  labs(title="BTC Google趨勢",x="日期", y="熱度")
+btcp/bp
+```  
+```{r}
+# eth
+market <- 'ethtwd'
+ethdf <- getk(market, 1440, t)
+ethp <- ethdf %>% ggplot(aes(x = date, y = close)) +
+  geom_barchart(aes(open = open, high = high, 
+                    low = low, close = close),
+                colour_up = "firebrick3", 
+                colour_down = "chartreuse3",
+                fill_up  = "firebrick3", 
+                fill_down  = "chartreuse3", size = 1) +
+  labs(title = paste(market, "Line Chart"),
+       y = "Closing Price", x = "") +
+  geom_ma(color = "darkblue", linetype = 7,size = 0.5) +
+  theme_tq()
+ep <- ethhit %>% ggplot(aes(date, hits,col=geo)) + geom_line() +
+  labs(title="ETH Google趨勢",x="日期", y="熱度")
+ethp/ep
+```
+
+
+
+
+```{r}
+btcdf <- left_join(btcdf, btchit %>%
+  spread(geo,hits), by=c("date"="date")) %>% 
+  select(date, close,TW,US)
+colnames(btcdf) <- c("date","price","TWtrends","UStrends")
+model <- btcdf %>% lm(data = ., price ~ UStrends+TWtrends)
+summary(model)
+```
+```{r}
+ethdf <- left_join(ethdf, ethhit %>%
+  spread(geo,hits), by=c("date"="date")) %>% 
+  select(date, close,TW,US)
+colnames(ethdf) <- c("date","price","TWtrends","UStrends")
+
+model <- ethdf %>% lm(data = ., price ~ UStrends+TWtrends)
+summary(model)
+```
+
+

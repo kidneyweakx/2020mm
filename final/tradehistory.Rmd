@@ -29,6 +29,10 @@ r2df <- function(l) {
                      stringsAsFactors=FALSE);
     name <- names(l[[1]]);colnames(df) <- name[1:ncol(df)];
     return(df)} }
+getpr <- function(market) {
+  client$get_public_all_tickers()[[market]]$buy %>%
+    as.numeric()
+}
 ```
 
 ### Get market & trade history
@@ -37,25 +41,74 @@ m <- client$get_public_all_markets() %>% r2df
 m <- m %>% filter(quote_unit=="usdt");get <- 0
 trhis <- do.call(rbind,lapply(c(1:nrow(m)), function(i){ 
   client$get_private_trade_history(m$id[i]) %>% r2df }))
+orhis <- do.call(rbind,lapply(c(1:nrow(m)), function(i){ 
+  client$get_private_order_history(m$id[i]) %>% r2df }))[,1:13]
 colnames(trhis) <- c('id','price','volume','funds','market',
                      'market_name','created_at','created_at_in_ms',
                      'side','fee','fee_currency','order_id','info',
                      'vol','fee_currency','oid')
+colnames(orhis) <- c('id','side','odr_type','price',
+                     'stop_price','state','market',
+                     'created_at','created_at_in_ms',
+                     'updated_at','updated_at_in_ms',
+                     'volume','remaining_volume')
 tr <- trhis %>% select(price, volume, market, created_at,side) %>% 
   mutate(date = as_datetime(as.numeric(created_at)),
         usdtprice = as.numeric(price)*as.numeric(volume)) 
+or <- orhis %>%  select(volume, market, created_at) %>% 
+  mutate(date = as_datetime(as.numeric(created_at)),
+         side='ask') %>% 
+  group_by(market) %>% 
+  mutate(price= tr$price[which(tr$market==market)[1]],
+         usdtprice=as.numeric(price)*as.numeric(volume))
+tr <- rbind(tr,or)
+```
+
+```{r}
+camt <- function(m){
+  amt <- client$get_private_account_balance(m)$balance %>% as.numeric()
+  amt2 <- client$get_private_account_balance(m)$locked %>% as.numeric()
+  return(amt+amt2)
+}
+for(i in c(1:nrow(m))) {
+  amt <- camt(m$base_unit[i])
+  nowp <- client$get_public_all_tickers()[[m$id[i]]]$buy %>% as.numeric()
+  acamt <- amt*nowp
+  get <- get+acamt
+  print(paste(m$base_unit[i],acamt))
+}
+assets <- get+camt("usdt")
 ```
 
 ### Show trading history
 ```{r}
 table(tr$market,tr$side)
-cat("交易次數:", nrow(tr),"筆")
+cat("  交易次數: ", nrow(tr),"筆")
 ```
 
+```{r}
+trstat <- tr %>% group_by(market,side) %>% 
+  summarise(totalpr= sum(usdtprice)) %>% 
+  spread(side,totalpr) %>% 
+  group_by(market) %>% 
+  mutate(profit=(ask/bid)-1)
+trstat <- left_join(trstat,tr %>% 
+        mutate(siden=paste0('n',side)) %>% 
+        group_by(market,siden) %>% 
+        summarise(n= n()) %>% 
+        spread(siden,n))
+trstat
+```
+```{r}
+cat("交易次數:", nrow(tr),"筆,",
+    "總共ask:", sum(trstat$nask),"筆,",
+    "總共bid:", sum(trstat$nbid),"筆,",
+    "\n獲利趴數:",(assets/60 -1)*100,"%")
+```
 
 ```{r}
 lapply(1:nrow(m), function(i){
-  start <- as.POSIXct("2020-12-01 00:00:00",tz="Asia/Taipei") %>%
+  start <- as.POSIXct("2020-12-07 00:00:00",tz="Asia/Taipei") %>%
   as.numeric()
   k <-  client$get_public_k_line(m$id[i], 
                                  toString(10000), # limit 
@@ -85,13 +138,3 @@ lapply(1:nrow(m), function(i){
 })
  
 ```
-
-
-```{r}
-tr %>% group_by(market) %>% 
-  summarise(buyp = mean(tr[tr$market==market&tr$side=="bid",]),
-            sellp =mean(tr[tr$market==market&tr$side=="ask",]),
-            ret= (sellp/buyp)-1
-              )
-```
-
